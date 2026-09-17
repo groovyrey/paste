@@ -1,27 +1,73 @@
 --!nonstrict
--- Synapse-lite declarative window, ~20 statements. Delta/executor-safe (no deps, no syn).
-local Tween, UIS = game:GetService("TweenService"), game:GetService("UserInputService")
-local lpg, Pg = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui"), ReplicatedStorage.Packages
-local RotJs = require(lpg.Parent.Packages:WaitForChild("Networking", 30) and game:GetService("ReplicatedStorage").Packages.Networking)
+-- Synapse-lite drag window, Delta-executor-safe, declarative. ~24 lines (+marker).
+local Players, Tween, UIS = game:GetService("Players"), game:GetService("TweenService"), game:GetService("UserInputService")
+local lpg = Players.LocalPlayer:WaitForChild("PlayerGui")
 local screen = Instance.new("ScreenGui")
-screen.IgnoreGuiInset, screen.ResetOnSpawn, screen.ZIndexBehavior = true, false, Enum.ZIndexBehavior.Sibling
+screen.IgnoreGuiInset, screen.ResetOnSpawn = true, false
 screen.Parent = lpg
-local Canvas = Instance.new("CanvasGroup") -- fold
-Canvas.GroupTransparency, Canvas.Size, Canvas.Anchored, Canvas.Position, Canvas.BackgroundTransparency = 0, UDim2.new(0, 500, 0, 324), true, UDim2.new(0.3515, 0, 0.3123, 0), 1
-Canvas.Parent = screen
-local bg = Instance.new("Frame")
-bg.BorderSizePixel, bg.BackgroundColor3, bg.Active, bg.Size = 0, Color3.fromRGB(27, 27, 30), true, UDim2.new(1, 0, 1, 0)
-bg.Parent = Canvas
-local uic = Instance.new("UICorner")
-uic.CornerRadius = UDim.new(0, 8)
-uic.Parent = bg
-local drag = Instance.new("Frame")
-drag.Size, drag.BackgroundTransparency, drag.ZIndex = UDim2.new(1, 0, 0, 32), 1, 8
-drag.Parent = bg
-local dragOffset; drag.InputBegan:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 then dragOffset = i.Position - Canvas.AbsolutePosition end end)
-drag.InputChanged:Connect(function(i) if dragOffset and i.UserInputType == Enum.UserInputType.MouseMovement then Canvas.Position = UDim2.fromOffset(i.Position.X - dragOffset.X, i.Position.Y - dragOffset.Y) end end)
-drag.InputEnded:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 then dragOffset = nil end end)
-local bar = Instance.new("Frame")
-bar.BackgroundColor3, bar.BorderSizePixel, bar.Rotation, bar.AnchorPoint = Color3.fromRGB(255, 219, 88), 0, 6, Vector2.new(0.5, 0.5)
-bar.Size, bar.Position, bar.ZIndex = UDim2.new( rent= 0.86, 0, 0, 4), UDim2.new(0.5, 0, 0, 0), 2
-bar.Parent = bg
+local win = Instance.new("Frame")
+win.BackgroundColor3, win.BackgroundTransparency, win.BorderSizePixel = Color3.fromRGB(27, 27, 30), 0.05, 0
+win.Size, win.Position = UDim2.fromOffset(508, 420), UDim2.new(0.5, -254, 0.4, -210)
+win.Parent = screen
+local rc = Instance.new("UICorner")
+rc.CornerRadius = UDim.new(0, 10)
+rc.Parent = win
+local st = Instance.new("UIStroke")
+st.Color, st.Thickness, st.Transparency = Color3.fromRGB(120, 116, 110), 1, 0.55
+st.Parent = win
+local grad = Instance.new("UIGradient")
+grad.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 190, 80)), ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 95, 70)) })
+grad.Parent = win
+local top = Instance.new("Frame")
+top.BackgroundTransparency, top.BorderSizePixel = 1, 0
+top.Size, top.Position = UDim2.new(1, 0, 0, 34), UDim2.new(0, 0, 0, 0)
+top.Parent = win
+local title = Instance.new("TextLabel")
+title.BackgroundTransparency, title.Text = 1, "groovyrey · steal lane"
+title.TextColor3, title.Font, title.TextSize = Color3.fromRGB(238, 238, 238), Enum.Font.GothamBold, 15
+title.Position, title.Size = UDim2.new(0, 14, 0, 9), UDim2.new(0, 220, 0, 20)
+title.Parent = top
+local dragOffset
+top.InputBegan:Connect(function(i)
+	if i.UserInputType == Enum.UserInputType.MouseButton1 then dragOffset = i.Position - win.AbsolutePosition end
+end)
+top.InputChanged:Connect(function(i)
+	if dragOffset and i.UserInputType == Enum.UserInputType.MouseMovement then
+		win.Position = UDim2.fromOffset(i.Position.X - dragOffset.X, i.Position.Y - dragOffset.Y)
+	end
+end)
+top.InputEnded:Connect(function(i)
+	if i.UserInputType == Enum.UserInputType.MouseButton1 then dragOffset = nil end
+end)
+local line = Instance.new("Frame")
+line.BackgroundColor3, line.BorderSizePixel, line.Size = Color3.fromRGB(80, 72, 60), 0, UDim2.new(1, -28, 0, 1)
+line.Position = UDim2.new(0, 14, 0, 38)
+line.Parent = win
+local label = Instance.new("TextLabel")
+label.BackgroundTransparency, label.Text = 1, "Auto-carry detection"
+label.TextColor3, label.Font, label.TextSize = Color3.fromRGB(210, 210, 210), Enum.Font.Gotham, 13
+label.Position, label.Size = UDim2.new(0, 16, 0, 64), UDim2.new(0, 200, 0, 22)
+label.Parent = win
+local knobRow = Instance.new("Frame")
+knobRow.BackgroundTransparency, knobRow.BorderSizePixel, knobRow.Size = 1, 0, UDim2.new(1, -32, 0, 34)
+knobRow.Position = UDim2.new(0, 16, 0, 90)
+knobRow.Parent = win
+local knob = Instance.new("TextButton")
+knob.BackgroundColor3, knob.AutoButtonColor, knob.Text = Color3.fromRGB(255, 190, 80), false, "  OFF"
+knob.TextColor3, knob.Font, knob.TextSize = Color3.fromRGB(20, 20, 20), Enum.Font.GothamBold, 13
+knob.Size, knob.Position = UDim2.new(0, 130, 0, 34), UDim2.new(0, 0, 0, 0)
+knob.Parent = knobRow
+local on = false
+knob.MouseButton1Click:Connect(function()
+	on = not on
+	knob.BackgroundColor3, knob.Text = on and Color3.fromRGB(120, 210, 120) or Color3.fromRGB(255, 190, 80), on and "  ON" or "  OFF"
+end)
+local footer = Instance.new("TextLabel")
+footer.BackgroundTransparency, footer.Text = 1, "server keeps guard motion; toll lane is the sanctioned return"
+footer.TextColor3, footer.Font, footer.TextSize = Color3.fromRGB(140, 140, 150), Enum.Font.Gotham, 11
+footer.Position, footer.Size = UDim2.new(0, 16, 0, 374), UDim2.new(0, 476, 0, 20)
+footer.Parent = win
+local okM, errM = pcall(function()
+	writefile("pasteUImarker.txt", "armed " .. tostring(os.time()))
+end)
+print("[pasteUI] armed (marker " .. tostring(okM) .. ")" .. (okM and "" or " err=" .. tostring(errM)))
