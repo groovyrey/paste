@@ -7,7 +7,9 @@ screen.IgnoreGuiInset, screen.ResetOnSpawn = true, false
 screen.Parent = lpg
 local win = Instance.new("Frame")
 win.BackgroundColor3, win.BackgroundTransparency, win.BorderSizePixel = Color3.fromRGB(27, 27, 30), 0.05, 0
-win.Size, win.Position = UDim2.fromOffset(508, 420), UDim2.new(0.5, -254, 0.4, -210)
+local cvp = workspace.CurrentCamera.ViewportSize
+local sc = math.min(1, (cvp.X - 32) / 508, (cvp.Y - 56) / 420)
+win.Size, win.Position = UDim2.fromOffset(508 * sc, 420 * sc), UDim2.new(0.5, -254 * sc, 0.4, -210 * sc)
 win.Parent = screen
 local rc = Instance.new("UICorner")
 rc.CornerRadius = UDim.new(0, 10)
@@ -29,15 +31,15 @@ title.Position, title.Size = UDim2.new(0, 14, 0, 9), UDim2.new(0, 220, 0, 20)
 title.Parent = top
 local dragOffset
 top.InputBegan:Connect(function(i)
-	if i.UserInputType == Enum.UserInputType.MouseButton1 then dragOffset = i.Position - win.AbsolutePosition end
+	if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then dragOffset = i.Position - win.AbsolutePosition end
 end)
 top.InputChanged:Connect(function(i)
-	if dragOffset and i.UserInputType == Enum.UserInputType.MouseMovement then
+	if dragOffset and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
 		win.Position = UDim2.fromOffset(i.Position.X - dragOffset.X, i.Position.Y - dragOffset.Y)
 	end
 end)
 top.InputEnded:Connect(function(i)
-	if i.UserInputType == Enum.UserInputType.MouseButton1 then dragOffset = nil end
+	if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then dragOffset = nil end
 end)
 local line = Instance.new("Frame")
 line.BackgroundColor3, line.BorderSizePixel, line.Size = Color3.fromRGB(80, 72, 60), 0, UDim2.new(1, -28, 0, 1)
