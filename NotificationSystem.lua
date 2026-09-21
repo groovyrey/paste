@@ -18,8 +18,7 @@
 
 	Options for new():
 		Theme      (table | nil)   override any DEFAULT_THEME field
-		Position   (string)        "TopRight" | "TopLeft" | "BottomRight" | "BottomLeft" | "TopCenter" | "BottomCenter"
-		                           default "TopRight"
+		                           (notifications always anchor top-center of the screen)
 		Width      (number)        toast width in pixels, default 300
 		Margin     (number)        distance from screen edge, default 16
 		Spacing    (number)        gap between stacked toasts, default 8
@@ -144,7 +143,7 @@ function NotificationSystem.new(options)
 	local self = setmetatable({}, NotificationSystem)
 
 	self.Theme = mergeTheme(DEFAULT_THEME, options.Theme)
-	self.Position = POSITION_RULES[options.Position] and options.Position or "TopRight"
+	self.Position = "TopCenter" -- fixed: notifications always anchor to top-center
 	self.Rule = POSITION_RULES[self.Position]
 	self.Width = options.Width or 300
 	self.Margin = options.Margin or 16
