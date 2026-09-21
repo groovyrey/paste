@@ -15,6 +15,8 @@
 local FOLDER = "Orbyte"
 local MODULE_PATH = FOLDER .. "/ModernUI.lua"
 local MODULE_URL = "https://raw.githubusercontent.com/groovyrey/paste/main/ModernUI.lua"
+local FLOADER_PATH = FOLDER .. "/FeatureLoader.lua"
+local FLOADER_URL = "https://raw.githubusercontent.com/groovyrey/paste/main/FeatureLoader.lua"
 
 local API_BASE = "https://orbyte-core.appleflux.workers.dev"
 local TOKEN_PATH = FOLDER .. "/token.txt"
@@ -79,6 +81,33 @@ local function loadModernUI()
 	end
 
 	assert(type(src) == "string" and #src > 0, "ModernUI.module: no source available")
+	local fn = assert(loadstring(src))
+	return fn()
+end
+
+-- Same loader as the UI module: always fetch fresh from the repo, cache it in
+-- the Orbyte folder, and only fall back to the cached copy when offline.
+local function loadFeatureLoader()
+	local src
+
+	local ok, fetched = pcall(function()
+		return game:HttpGet(FLOADER_URL, true)
+	end)
+	if ok and type(fetched) == "string" and #fetched > 0 then
+		src = fetched
+		if type(writefile) == "function" and folderOk then
+			pcall(function() writefile(FLOADER_PATH, src) end)
+		end
+	elseif type(readfile) == "function" then
+		local okCached, cached = pcall(function()
+			return readfile(FLOADER_PATH)
+		end)
+		if okCached and type(cached) == "string" and #cached > 0 then
+			src = cached
+		end
+	end
+
+	assert(type(src) == "string" and #src > 0, "FeatureLoader.module: no source available")
 	local fn = assert(loadstring(src))
 	return fn()
 end
@@ -188,9 +217,35 @@ local function openModernUI()
 		print("Toggle:", state)
 	end)
 
-	ui:AddButton("Collapse / Expand", function()
-		ui:ToggleCollapsed()
-	end)
+	-- FeatureLoader wiring: load like the UI module, then expose toggles.
+	local okLoader, Loader = pcall(loadFeatureLoader)
+	if okLoader and type(Loader) == "table" then
+		ui:AddButton("Collapse / Expand", function()
+			ui:ToggleCollapsed()
+		end)
+
+		ui:AddLabel("Features")
+
+		ui:AddToggle("Infinite Jump", Loader.IsEnabled("InfiniteJump"), function(state)
+			if state then
+				Loader.Enable("InfiniteJump")
+			else
+				Loader.Disable("InfiniteJump")
+			end
+		end)
+
+		ui:AddToggle("Speed Boost", Loader.IsEnabled("WalkSpeed"), function(state)
+			if state then
+				Loader.Enable("WalkSpeed", 32)
+			else
+				Loader.Disable("WalkSpeed")
+			end
+		end)
+	else
+		ui:AddButton("Collapse / Expand", function()
+			ui:ToggleCollapsed()
+		end)
+	end
 
 	ui:AddSlider("Volume", 0, 100, 50, function(value)
 		print("Slider:", value)
