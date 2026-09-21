@@ -14,7 +14,10 @@
 
 	Options for new():
 		Title  (string)            default "Modern UI"
-		Size   (Vector2)           default 340x420
+		Size   (Vector2)           default 340x420 (preferred size; it is
+		                           clamped so the window always fits the screen —
+		                           content scrolls when it is taller than that)
+		Margin (number)            default 16, free space kept around the window
 		Theme  (table | nil)       override any DEFAULT_THEME field
 		Gui    (ScreenGui | nil)   parent a window into an existing GUI
 		Parent (instance | nil)    default LocalPlayer.PlayerGui
@@ -45,6 +48,8 @@ ModernUI.Theme = DEFAULT_THEME
 
 local TWEEN_FAST = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local TWEEN_MED  = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+local MIN_WINDOW = 120 -- smallest width/height the window may shrink to
 
 local function mergeTheme(base, overrides)
 	local t = {}
@@ -91,6 +96,18 @@ local function tween(inst, info, props)
 	local t = TweenService:Create(inst, info, props)
 	t:Play()
 	return t
+end
+
+-- Usable screen area for the GUI (already excludes the top bar inset unless the
+-- ScreenGui ignores it). Falls back to the camera viewport if the ScreenGui
+-- hasn't been laid out yet.
+local function getViewport(gui)
+	local abs = gui.AbsoluteSize
+	if abs.X > 0 and abs.Y > 0 then
+		return abs
+	end
+	local cam = workspace.CurrentCamera
+	return cam and cam.ViewportSize or Vector2.new(800, 600)
 end
 
 -- onClick (optional) fires on release only if the pointer barely moved,
@@ -168,7 +185,13 @@ function ModernUI.new(options)
 	end
 	self.Gui = gui
 
-	local size = options.Size or Vector2.new(340, 420)
+	-- Preferred size is clamped to the screen so the window always fits (phones
+	-- included). The content area is a ScrollingFrame, so anything taller than
+	-- the window just scrolls.
+	self.DesiredSize = options.Size or Vector2.new(340, 420)
+	self.Margin = options.Margin or 16
+
+	local size = self:_fitSize()
 	local expanded = UDim2.fromOffset(size.X, size.Y)
 	local collapsed = options.CollapsedSize or UDim2.fromOffset(56, 56)
 
@@ -246,6 +269,7 @@ function ModernUI.new(options)
 		Size = UDim2.new(1, 0, 1, -44),
 		CanvasSize = UDim2.new(0, 0, 0, 0),
 		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		ScrollingDirection = Enum.ScrollingDirection.Y,
 		ScrollBarThickness = 4,
 		ScrollBarImageColor3 = theme.Accent,
 		BorderSizePixel = 0,
@@ -289,7 +313,60 @@ function ModernUI.new(options)
 		self:SetCollapsed(not self.isCollapsed)
 	end)
 
+	-- Re-fit when the screen size changes (rotation, window resize, keyboard…).
+	gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		self:Refit()
+	end)
+
 	return self
+end
+
+--// SIZING ---------------------------------------------------------------
+
+-- Preferred size clamped to the available screen area (minus margin).
+function ModernUI:_fitSize()
+	local view = getViewport(self.Gui)
+	local m = self.Margin
+	return Vector2.new(
+		math.max(math.min(self.DesiredSize.X, view.X - m * 2), MIN_WINDOW),
+		math.max(math.min(self.DesiredSize.Y, view.Y - m * 2), MIN_WINDOW)
+	)
+end
+
+-- Nudge the window back on screen if it's hanging off any edge.
+function ModernUI:_clampToScreen()
+	local window = self.Window
+	if not window or not window.Parent then return end
+
+	local view = getViewport(self.Gui)
+	local rel = window.AbsolutePosition - self.Gui.AbsolutePosition
+	local size = window.AbsoluteSize
+
+	local targetX = math.clamp(rel.X, 0, math.max(0, view.X - size.X))
+	local targetY = math.clamp(rel.Y, 0, math.max(0, view.Y - size.Y))
+	local dx, dy = targetX - rel.X, targetY - rel.Y
+
+	if math.abs(dx) > 0.5 or math.abs(dy) > 0.5 then
+		tween(window, self.TweenFast, {
+			Position = window.Position + UDim2.fromOffset(dx, dy),
+		})
+	end
+end
+
+-- Recompute the window size for the current screen. Called automatically when
+-- the screen size changes; call it yourself after changing DesiredSize/Margin.
+function ModernUI:Refit()
+	local fit = self:_fitSize()
+	self.ExpandedSize = UDim2.fromOffset(fit.X, fit.Y)
+
+	if not self.isCollapsed then
+		tween(self.Window, self.TweenFast, { Size = self.ExpandedSize })
+		task.delay(self.TweenFast.Time, function()
+			self:_clampToScreen()
+		end)
+	else
+		self:_clampToScreen()
+	end
 end
 
 --// WINDOW CONTROLS ------------------------------------------------------
@@ -345,6 +422,7 @@ function ModernUI:SetCollapsed(state)
 			self.TitleText.Visible = true
 			self.TitleBarMask.Visible = true
 			self.Content.Visible = true
+			self:_clampToScreen() -- expanded near an edge? pull it back on screen
 		end)
 	end
 end
@@ -519,6 +597,7 @@ function ModernUI:AddSlider(text, min, max, default, callback)
 		if input.UserInputType == Enum.UserInputType.MouseButton1
 			or input.UserInputType == Enum.UserInputType.Touch then
 			dragging = true
+			self.Content.ScrollingEnabled = false -- don't scroll the window while sliding
 			updateFromInput(input.Position)
 		end
 	end)
@@ -533,7 +612,10 @@ function ModernUI:AddSlider(text, min, max, default, callback)
 	UserInputService.InputEnded:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1
 			or input.UserInputType == Enum.UserInputType.Touch then
-			dragging = false
+			if dragging then
+				dragging = false
+				self.Content.ScrollingEnabled = true
+			end
 		end
 	end)
 

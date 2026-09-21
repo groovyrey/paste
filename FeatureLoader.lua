@@ -1,19 +1,23 @@
 --[[
 	FeatureLoader (ModuleScript)
-	Put in ReplicatedStorage and require it from a LocalScript.
+	Put in ReplicatedStorage and require it from a LocalScript
+	(put that LocalScript in StarterPlayerScripts so it survives respawns).
 
 	Usage:
 		local Loader = require(game.ReplicatedStorage.FeatureLoader)
 
 		Loader("InfiniteJump")            -- callable: toggles the feature
-		Loader.Enable("InfiniteJump")     -- turn on
-		Loader.Disable("InfiniteJump")    -- turn off
-		Loader.Toggle("InfiniteJump")     -- flip state
-		Loader.IsEnabled("InfiniteJump")  -- true / false
+		Loader.Enable("WalkSpeed", 40)    -- features can take arguments
+		Loader.Disable("InfiniteJump")    -- the ONLY thing that turns a feature off
+		Loader.IsEnabled("InfiniteJump")
 		Loader.Register("Name", function(...) ... return cleanupFn end)
+
+	Enabled features stay on through respawns, humanoid replacement, and other
+	scripts trying to change the values, until you call Disable/Toggle/DisableAll.
 ]]
 
 local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
 local Loader = {}
@@ -89,47 +93,95 @@ function Loader.List()
 end
 
 ----------------------------------------------------------------------
+-- Helpers
+----------------------------------------------------------------------
+
+local function getHumanoid()
+	local character = Players.LocalPlayer.Character
+	return character and character:FindFirstChildOfClass("Humanoid")
+end
+
+----------------------------------------------------------------------
 -- Built-in features
 ----------------------------------------------------------------------
 
 Loader.Register("InfiniteJump", function()
-	local player = Players.LocalPlayer
+	local connections = {}
 
-	local connection = UserInputService.JumpRequest:Connect(function()
-		local character = player.Character
-		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-		if humanoid then
+	-- Jump requests are read fresh every time, so this survives respawns.
+	table.insert(connections, UserInputService.JumpRequest:Connect(function()
+		local humanoid = getHumanoid()
+		if humanoid and humanoid.Health > 0 then
+			humanoid:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
 			humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
 		end
-	end)
+	end))
+
+	-- Keep the Jumping state enabled even if another script disables it.
+	table.insert(connections, RunService.Heartbeat:Connect(function()
+		local humanoid = getHumanoid()
+		if humanoid and not humanoid:GetStateEnabled(Enum.HumanoidStateType.Jumping) then
+			humanoid:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
+		end
+	end))
 
 	return function()
-		connection:Disconnect()
+		for _, c in ipairs(connections) do
+			c:Disconnect()
+		end
 	end
 end)
 
--- Example of a feature that takes an argument: Loader.Enable("WalkSpeed", 32)
+-- Loader.Enable("WalkSpeed", 40)
 Loader.Register("WalkSpeed", function(speed)
-	local player = Players.LocalPlayer
 	speed = speed or 32
 
-	local function apply(character)
-		local humanoid = character:WaitForChild("Humanoid", 5)
-		if humanoid then
+	local original = 16
+	local first = getHumanoid()
+	if first then
+		original = first.WalkSpeed
+	end
+
+	local connections = {}
+	local watched = nil
+
+	local function apply(humanoid)
+		if humanoid.WalkSpeed ~= speed then
 			humanoid.WalkSpeed = speed
 		end
 	end
 
-	if player.Character then
-		apply(player.Character)
+	-- Instantly undo any change made by other scripts on the current humanoid.
+	local function watch(humanoid)
+		if watched == humanoid then
+			return
+		end
+		if connections.changed then
+			connections.changed:Disconnect()
+		end
+		watched = humanoid
+		apply(humanoid)
+		connections.changed = humanoid:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
+			apply(humanoid)
+		end)
 	end
-	local connection = player.CharacterAdded:Connect(apply)
+
+	-- Every frame: catches respawns and replaced humanoids.
+	connections.heartbeat = RunService.Heartbeat:Connect(function()
+		local humanoid = getHumanoid()
+		if humanoid then
+			watch(humanoid)
+			apply(humanoid)
+		end
+	end)
 
 	return function()
-		connection:Disconnect()
-		local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		for _, c in pairs(connections) do
+			c:Disconnect()
+		end
+		local humanoid = getHumanoid()
 		if humanoid then
-			humanoid.WalkSpeed = 16
+			humanoid.WalkSpeed = original
 		end
 	end
 end)
