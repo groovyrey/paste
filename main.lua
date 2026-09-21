@@ -202,57 +202,135 @@ end
 local ModernUI = loadModernUI()
 
 local SPLASH_SIZE = Vector2.new(320, 260)
-local MAIN_SIZE = Vector2.new(340, 420)
+local MAIN_SIZE = Vector2.new(360, 460)
+
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+local function toggleFeature(Loader, name, state, ...)
+	if state then
+		Loader.Enable(name, ...)
+	else
+		Loader.Disable(name)
+	end
+end
 
 local function openModernUI()
 	local ui = ModernUI.new({ Title = "Orbyte", Size = MAIN_SIZE })
 
-	ui:AddLabel("Welcome to the app")
-
-	ui:AddButton("Click Me", function()
-		print("Button clicked!")
-	end)
-
-	ui:AddToggle("Enable Feature", false, function(state)
-		print("Toggle:", state)
-	end)
-
-	-- FeatureLoader wiring: load like the UI module, then expose toggles.
 	local okLoader, Loader = pcall(loadFeatureLoader)
-	if okLoader and type(Loader) == "table" then
+	if not (okLoader and type(Loader) == "table") then
 		ui:AddButton("Collapse / Expand", function()
 			ui:ToggleCollapsed()
 		end)
-
-		ui:AddLabel("Features")
-
-		ui:AddToggle("Infinite Jump", Loader.IsEnabled("InfiniteJump"), function(state)
-			if state then
-				Loader.Enable("InfiniteJump")
-			else
-				Loader.Disable("InfiniteJump")
-			end
-		end)
-
-		ui:AddToggle("Speed Boost", Loader.IsEnabled("WalkSpeed"), function(state)
-			if state then
-				Loader.Enable("WalkSpeed", 32)
-			else
-				Loader.Disable("WalkSpeed")
-			end
-		end)
-	else
-		ui:AddButton("Collapse / Expand", function()
-			ui:ToggleCollapsed()
-		end)
+		ui:AddLabel("FeatureLoader unavailable.")
+		return
 	end
 
-	ui:AddSlider("Volume", 0, 100, 50, function(value)
-		print("Slider:", value)
+	ui:AddButton("Collapse / Expand", function()
+		ui:ToggleCollapsed()
 	end)
 
-	ui:AddTextBox("Enter name...", function(text, enterPressed)
-		print("Text entered:", text)
+	--// REGISTER ORBYTE FEATURES ------------------------------------------
+
+	-- Noclip: keeps every character part non-collidable while on.
+	Loader.Register("Noclip", function()
+		local affected = {}
+
+		local function apply(character)
+			if not character then return end
+			for _, part in ipairs(character:GetDescendants()) do
+				if part:IsA("BasePart") and part.CanCollide then
+					part.CanCollide = false
+					table.insert(affected, part)
+				end
+			end
+		end
+
+		local connSpawn = LocalPlayer.CharacterAdded:Connect(apply)
+		apply(LocalPlayer.Character)
+
+		return function()
+			connSpawn:Disconnect()
+			for _, part in ipairs(affected) do
+				part.CanCollide = true
+			end
+		end
+	end)
+
+-- ESP: box highlights around every other player while on.
+	Loader.Register("ESP", function()
+		local highlights = {}
+		local connections = {}
+
+		local function add(player)
+			local character = player.Character
+			if not character or highlights[player] then return end
+			local box = Instance.new("Highlight")
+			box.FillTransparency = 0
+			box.FillColor = Color3.fromRGB(60, 130, 255)
+			box.OutlineTransparency = 0
+			box.OutlineColor = Color3.new(1, 1, 1)
+			box.Parent = character
+			highlights[player] = box
+		end
+
+		local function remove(player)
+			local box = highlights[player]
+			if box then
+				pcall(function() box:Destroy() end)
+				highlights[player] = nil
+			end
+		end
+
+		local function wire(player)
+			if player == LocalPlayer then return end
+			add(player)
+			local conn = player.CharacterAdded:Connect(function() add(player) end)
+			table.insert(connections, conn)
+		end
+
+		for _, player in ipairs(Players:GetPlayers()) do
+			wire(player)
+		end
+
+		table.insert(connections, Players.PlayerAdded:Connect(function(player)
+			wire(player)
+		end))
+		table.insert(connections, Players.PlayerRemoving:Connect(remove))
+
+		return function()
+			for _, conn in ipairs(connections) do
+				pcall(function() conn:Disconnect() end)
+			end
+			for _, box in pairs(highlights) do
+				pcall(function() box:Destroy() end)
+			end
+		end
+	end)
+
+	--// BUILD UI -----------------------------------------------------------
+
+	ui:AddLabel("Orbyte v1.0")
+
+	ui:AddLabel("Movement")
+
+	ui:AddToggle("Infinite Jump", Loader.IsEnabled("InfiniteJump"), function(state)
+		toggleFeature(Loader, "InfiniteJump", state)
+	end)
+
+	ui:AddToggle("Speed Boost", Loader.IsEnabled("WalkSpeed"), function(state)
+		toggleFeature(Loader, "WalkSpeed", state, 32)
+	end)
+
+	ui:AddToggle("Noclip", Loader.IsEnabled("Noclip"), function(state)
+		toggleFeature(Loader, "Noclip", state)
+	end)
+
+	ui:AddLabel("Visual")
+
+	ui:AddToggle("ESP", Loader.IsEnabled("ESP"), function(state)
+		toggleFeature(Loader, "ESP", state)
 	end)
 end
 
