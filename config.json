@@ -1,0 +1,11 @@
+{
+	"universal": {
+		"label": "Universal — Launch Orbyte",
+		"features": ["InfiniteJump", "WalkSpeed", "Noclip", "ESP"]
+	},
+	"games": [
+		{ "id": 2753915549, "name": "Blox Fruits" },
+		{ "id": 4924922222, "name": "Brookhaven RP" },
+		{ "id": 142823291, "name": "Murder Mystery 2" }
+	]
+}

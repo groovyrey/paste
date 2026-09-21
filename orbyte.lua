@@ -17,6 +17,10 @@ local MODULE_PATH = FOLDER .. "/ModernUI.lua"
 local MODULE_URL = "https://raw.githubusercontent.com/groovyrey/paste/main/ModernUI.lua"
 local FLOADER_PATH = FOLDER .. "/FeatureLoader.lua"
 local FLOADER_URL = "https://raw.githubusercontent.com/groovyrey/paste/main/FeatureLoader.lua"
+local CONFIG_PATH = FOLDER .. "/config.json"
+local CONFIG_URL = "https://raw.githubusercontent.com/groovyrey/paste/main/config.json"
+local NNOTIF_PATH = FOLDER .. "/NotificationSystem.lua"
+local NNOTIF_URL = "https://raw.githubusercontent.com/groovyrey/paste/main/NotificationSystem.lua"
 
 local API_BASE = "https://orbyte-core.appleflux.workers.dev"
 local TOKEN_PATH = FOLDER .. "/token.txt"
@@ -112,6 +116,78 @@ local function loadFeatureLoader()
 	return fn()
 end
 
+-- GitHub-driven config (games + features). Always fetched fresh so editing
+-- config.json on GitHub updates every client; cached copy is the fallback.
+local function loadConfig()
+	local src
+
+	local ok, fetched = pcall(function()
+		return game:HttpGet(CONFIG_URL)
+	end)
+	if ok and type(fetched) == "string" and #fetched > 0 then
+		src = fetched
+		if type(writefile) == "function" and folderOk then
+			pcall(function() writefile(CONFIG_PATH, src) end)
+		end
+	elseif type(readfile) == "function" then
+		local okCached, cached = pcall(function()
+			return readfile(CONFIG_PATH)
+		end)
+		if okCached and type(cached) == "string" and #cached > 0 then
+			src = cached
+		end
+	end
+
+	if type(src) ~= "string" or #src == 0 then
+		return nil
+	end
+
+	local okJson, parsed = pcall(function()
+		return HttpService:JSONDecode(src)
+	end)
+	if not okJson or type(parsed) ~= "table" then
+		return nil
+	end
+	return parsed
+end
+
+-- Same loader pattern: fetch the notification module fresh, cache it, fall
+-- back to the cached copy if the fetch fails.
+local function loadNotificationSystem()
+	local src
+
+	local ok, fetched = pcall(function()
+		return game:HttpGet(NNOTIF_URL, true)
+	end)
+	if ok and type(fetched) == "string" and #fetched > 0 then
+		src = fetched
+		if type(writefile) == "function" and folderOk then
+			pcall(function() writefile(NNOTIF_PATH, src) end)
+		end
+	elseif type(readfile) == "function" then
+		local okCached, cached = pcall(function()
+			return readfile(NNOTIF_PATH)
+		end)
+		if okCached and type(cached) == "string" and #cached > 0 then
+			src = cached
+		end
+	end
+
+	if type(src) ~= "string" or #src == 0 then
+		return nil
+	end
+
+	local okFn, fn = pcall(loadstring, src)
+	if not okFn or type(fn) ~= "function" then
+		return nil
+	end
+	local okMod, Notif = pcall(fn)
+	if okMod and type(Notif) == "table" and type(Notif.new) == "function" then
+		return Notif
+	end
+	return nil
+end
+
 --// KEY API CLIENT ---------------------------------------------------------
 
 local HttpService = game:GetService("HttpService")
@@ -201,21 +277,47 @@ end
 
 local ModernUI = loadModernUI()
 
+local notify = nil
+do
+	local Notif = loadNotificationSystem()
+	if Notif then
+		local okNew, inst = pcall(Notif.new, Notif, { Theme = ModernUI.Theme })
+		if okNew and inst then
+			notify = inst
+		end
+	end
+end
+
+-- Toast helper that no-ops (falls back to print) if notifications are
+-- unavailable, so the client never hard-fails on it.
+local function showNotif(title, message, kind, duration)
+	local okPush, err = pcall(function()
+		if notify then
+			notify:Push({ Title = title, Message = message, Type = kind, Duration = duration })
+		end
+	end)
+	if not okPush or not notify then
+		print(("[Orbyte] %s %s"):format(tostring(title), tostring(message)))
+	end
+end
+
 local SPLASH_SIZE = Vector2.new(320, 260)
 local MAIN_SIZE = Vector2.new(360, 460)
+local CHOOSER_SIZE = Vector2.new(320, 380)
 
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 
-local function toggleFeature(Loader, name, state, ...)
-	if state then
-		Loader.Enable(name, ...)
-	else
-		Loader.Disable(name)
-	end
-end
+local FEATURE_DEFS = {
+	InfiniteJump = { label = "Infinite Jump" },
+	WalkSpeed = { label = "Speed Boost", args = { 32 } },
+	Noclip = { label = "Noclip" },
+	ESP = { label = "ESP" },
+}
 
-local function openModernUI()
+local DEFAULT_FEATURES = { "InfiniteJump", "WalkSpeed", "Noclip", "ESP" }
+
+local function openModernUI(features)
 	local ui = ModernUI.new({ Title = "Orbyte", Size = MAIN_SIZE })
 
 	local okLoader, Loader = pcall(loadFeatureLoader)
@@ -311,32 +413,65 @@ local function openModernUI()
 
 	--// BUILD UI -----------------------------------------------------------
 
+	local unpackArgs = table.unpack or unpack
+
+	local function buildToggles(features)
+		for _, name in ipairs(features) do
+			local def = FEATURE_DEFS[name] or {}
+			local label = def.label or tostring(name)
+			local args = def.args or {}
+			ui:AddToggle(label, Loader.IsEnabled(name), function(state)
+				if state then
+					Loader.Enable(name, unpackArgs(args))
+				else
+					Loader.Disable(name)
+				end
+			end)
+		end
+	end
+
 	ui:AddLabel("Orbyte v1.0")
+	ui:AddLabel("Features")
+	buildToggles(features or DEFAULT_FEATURES)
+end
 
-	ui:AddLabel("Movement")
+-- Game chooser shown after a valid key. Presets and the Universal label come
+-- from config.json on GitHub; each preset is a stub until it ships a loader.
+local function openGameChooser(config)
+	local ui = ModernUI.new({ Title = "Orbyte — Game", Size = CHOOSER_SIZE })
 
-	ui:AddToggle("Infinite Jump", Loader.IsEnabled("InfiniteJump"), function(state)
-		toggleFeature(Loader, "InfiniteJump", state)
-	end)
+	ui:AddLabel("Choose a game")
 
-	ui:AddToggle("Speed Boost", Loader.IsEnabled("WalkSpeed"), function(state)
-		toggleFeature(Loader, "WalkSpeed", state, 32)
-	end)
+	local games = config and type(config.games) == "table" and config.games or {}
+	if #games == 0 then
+		ui:AddLabel("No presets configured yet.")
+	end
 
-	ui:AddToggle("Noclip", Loader.IsEnabled("Noclip"), function(state)
-		toggleFeature(Loader, "Noclip", state)
-	end)
+	for _, game in ipairs(games) do
+		local name = tostring(game.name or "?")
+		ui:AddButton(name, function()
+			showNotif("Coming soon", name .. " preset", "Warning")
+		end)
+	end
 
-	ui:AddLabel("Visual")
+	ui:AddLabel("Universal")
 
-	ui:AddToggle("ESP", Loader.IsEnabled("ESP"), function(state)
-		toggleFeature(Loader, "ESP", state)
+	local universal = config and type(config.universal) == "table" and config.universal or {}
+	local univLabel = tostring(universal.label or "Universal — Launch Orbyte")
+	ui:AddButton(univLabel, function()
+		ui:Destroy()
+		showNotif("Orbyte", "Universal loaded.", "Success")
+		openModernUI(universal.features)
 	end)
 end
 
+-- Load GitHub config once and keep the client working if it fails.
+local CONFIG = loadConfig()
+
 -- Authenticated sessions skip the splash entirely.
 if tryBoot() then
-	openModernUI()
+	showNotif("Orbyte", "Welcome back.", "Success")
+	openGameChooser(CONFIG)
 	return
 end
 
@@ -371,9 +506,11 @@ splash:AddButton("Verify", function()
 			pcall(function() writefile(TOKEN_PATH, resp.token) end)
 		end
 		splash:Destroy()
-		openModernUI()
+		showNotif("Key verified", "Welcome back.", "Success")
+		openGameChooser(CONFIG)
 	else
 		local err = resp and resp.error or "Verification failed."
 		showApiError("Verification failed: " .. tostring(err))
+		showNotif("Key rejected", tostring(err), "Error")
 	end
 end)
