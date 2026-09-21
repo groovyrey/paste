@@ -21,6 +21,8 @@ local CONFIG_PATH = FOLDER .. "/config.json"
 local CONFIG_URL = "https://raw.githubusercontent.com/groovyrey/paste/main/config.json"
 local NNOTIF_PATH = FOLDER .. "/NotificationSystem.lua"
 local NNOTIF_URL = "https://raw.githubusercontent.com/groovyrey/paste/main/NotificationSystem.lua"
+local SAE_PATH = FOLDER .. "/SAE.lua"
+local SAE_URL = "https://raw.githubusercontent.com/groovyrey/paste/main/SAE.lua"
 
 local HttpService = game:GetService("HttpService")
 
@@ -208,6 +210,39 @@ local function loadNotificationSystem()
 	return nil
 end
 
+-- SAE.lua registers its own features ("SAE", "SAE:PromptWatcher") against the
+-- loader/modules we pass it. Same load pattern: fresh fetch, cache, fallback.
+local function loadSAEFeatures()
+	local src
+
+	local ok, fetched = pcall(function()
+		return game:HttpGet(SAE_URL, true)
+	end)
+	if ok and type(fetched) == "string" and #fetched > 0 then
+		src = fetched
+		if type(writefile) == "function" and folderOk then
+			pcall(function() writefile(SAE_PATH, src) end)
+		end
+	elseif type(readfile) == "function" then
+		local okCached, cached = pcall(function()
+			return readfile(SAE_PATH)
+		end)
+		if okCached and type(cached) == "string" and #cached > 0 then
+			src = cached
+		end
+	end
+
+	if type(src) ~= "string" or #src == 0 then
+		return nil
+	end
+
+	local okFn, fn = pcall(loadstring, src)
+	if not okFn or type(fn) ~= "function" then
+		return nil
+	end
+	return pcall(fn)
+end
+
 --// KEY API CLIENT ---------------------------------------------------------
 
 -- Returns a stable device id that survives restarts (persisted in the folder).
@@ -295,15 +330,12 @@ end
 
 local ModernUI = loadModernUI()
 
+local NotifModule = loadNotificationSystem()
 local notify = nil
-do
-	local Notif = loadNotificationSystem()
-	if Notif then
-		local okNew, inst = pcall(Notif.new, Notif, { Theme = ModernUI.Theme })
-		if okNew and inst then
-			notify = inst
-			_G.OrbyteNotif = inst
-		end
+if NotifModule then
+	local okNew, inst = pcall(NotifModule.new, NotifModule, { Theme = ModernUI.Theme })
+	if okNew and inst then
+		notify = inst
 	end
 end
 
@@ -332,7 +364,17 @@ local FEATURE_DEFS = {
 	WalkSpeed = { label = "Speed Boost", args = { 32 } },
 	Noclip = { label = "Noclip" },
 	ESP = { label = "ESP" },
-	SaePromptInfo = { label = "Prompt Inspector" },
+	SAE = {
+		label = "SAE Panel",
+		kind = "action",
+		action = function(Loader)
+			if Loader.IsEnabled("SAE") then
+				Loader.Disable("SAE")
+			else
+				Loader.Enable("SAE")
+			end
+		end,
+	},
 	SaeCopyPos = {
 		label = "Save Root Position",
 		hint = "Position…",
@@ -370,64 +412,12 @@ local function openModernUI(uiTitle, features)
 
 	--// REGISTER ORBYTE FEATURES ------------------------------------------
 
-	-- SAE Prompt Inspector: dumps every prompt opened/closed by the game to a
-	-- toast. Steal An Egg preset only.
-	Loader.Register("SaePromptInfo", function()
-		local PromptService = game:GetService("PromptService")
-
-		local function describe(prompt)
-			local parts = {}
-			local okProps, props = pcall(function()
-				return prompt:GetProperties()
-			end)
-			if okProps and type(props) == "table" then
-				for _, prop in ipairs(props) do
-					local okValue, value = pcall(function()
-						local v = prompt[prop.Name]
-						if typeof and typeof(v) == "EnumItem" then
-							return v.Name
-						end
-						if typeof then
-							if typeof(v) == "Instance" then
-								return v:GetFullName()
-							end
-							if typeof(v) == "Color3" or typeof(v) == "Vector3" or typeof(v) == "UDim2" then
-								return tostring(v)
-							end
-						end
-						return tostring(v)
-					end)
-					if okValue then
-						local s = tostring(value)
-						if s ~= "nil" and s ~= "" and #s < 60 then
-							table.insert(parts, prop.Name .. "=" .. s)
-						end
-					end
-				end
-			else
-				table.insert(parts, "PromptType=" .. tostring(prompt.PromptType))
-				table.insert(parts, "CorrelationId=" .. tostring(prompt.CorrelationId))
-			end
-			return table.concat(parts, " · ")
-		end
-
-		local connections = {}
-		table.insert(connections, PromptService.PromptTriggered:Connect(function(prompt, user)
-			local who = user and (user.Name .. "(" .. user.UserId .. ")") or "self"
-			local msg = describe(prompt)
-			if #msg > 400 then msg = string.sub(msg, 1, 400) .. "…" end
-			showNotif("Prompt opened · " .. who, msg, "Info", 8)
-		end))
-		table.insert(connections, PromptService.PromptEnded:Connect(function(prompt)
-			showNotif("Prompt closed", "CorrelationId=" .. tostring(prompt.CorrelationId), "Info", 4)
-		end))
-
-		return function()
-			for _, c in ipairs(connections) do
-				c:Disconnect()
-			end
-		end
-	end)
+	-- SAE.lua registers its own features ("SAE", "SAE:PromptWatcher") against the
+	-- loader + modules we pass it.
+	local okSAE, SAEFn = pcall(loadSAEFeatures)
+	if okSAE and type(SAEFn) == "function" then
+		pcall(SAEFn, Loader, ModernUI, NotifModule)
+	end
 
 	-- Noclip: keeps every character part non-collidable while on.
 	Loader.Register("Noclip", function()
@@ -515,7 +505,12 @@ local function openModernUI(uiTitle, features)
 			local label = def.label or tostring(name)
 			local args = def.args or {}
 
-			if def.kind == "button" and type(def.action) == "function" then
+			if def.kind == "action" and type(def.action) == "function" then
+				-- Plain button (no textbox): opens/toggles a custom panel.
+				ui:AddButton(label, function()
+					def.action(Loader)
+				end)
+			elseif def.kind == "button" and type(def.action) == "function" then
 				local result = ui:AddTextBox(def.hint or "—")
 				ui:AddButton(label, function()
 					local value = def.action()
