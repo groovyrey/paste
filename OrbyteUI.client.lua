@@ -131,23 +131,8 @@ local Window = create("Frame", {
 	Size = UDim2.fromOffset(340, 420),
 	Position = UDim2.new(0.5, -170, 0.5, -210),
 	BackgroundColor3 = Theme.Background,
-	BackgroundTransparency = 1,
 	Parent = ScreenGui,
 }, { windowCorner, stroke(Theme.Border, 1) })
-
-create("ImageLabel", {
-	Name = "Shadow",
-	BackgroundTransparency = 1,
-	Image = "rbxassetid://1316045217",
-	ImageColor3 = Color3.new(0, 0, 0),
-	ImageTransparency = 0.4,
-	ScaleType = Enum.ScaleType.Slice,
-	SliceCenter = Rect.new(10, 10, 118, 118),
-	Size = UDim2.new(1, 40, 1, 40),
-	Position = UDim2.new(0, -20, 0, -20),
-	ZIndex = 0,
-	Parent = Window,
-})
 
 -- NOTE: this is a TextButton (not a Frame) so that Roblox marks drag input as
 -- "game processed" — otherwise the default camera script also reads the same
