@@ -22,6 +22,8 @@ local CONFIG_URL = "https://raw.githubusercontent.com/groovyrey/paste/main/confi
 local NNOTIF_PATH = FOLDER .. "/NotificationSystem.lua"
 local NNOTIF_URL = "https://raw.githubusercontent.com/groovyrey/paste/main/NotificationSystem.lua"
 
+local HttpService = game:GetService("HttpService")
+
 local API_BASE = "https://orbyte-core.appleflux.workers.dev"
 local TOKEN_PATH = FOLDER .. "/token.txt"
 local DEVICE_PATH = FOLDER .. "/device.id"
@@ -41,7 +43,8 @@ if _G.OrbyteSession then
 	end
 	return
 end
-_G.OrbyteSession = true
+
+local function main()
 
 --// ORBYTE FOLDER CHECK ---------------------------------------------------
 
@@ -206,8 +209,6 @@ local function loadNotificationSystem()
 end
 
 --// KEY API CLIENT ---------------------------------------------------------
-
-local HttpService = game:GetService("HttpService")
 
 -- Returns a stable device id that survives restarts (persisted in the folder).
 local function deviceId()
@@ -565,3 +566,25 @@ splash:AddButton("Verify", function()
 		showNotif("Key rejected", tostring(err), "Error")
 	end
 end)
+
+end
+--// main() -----------------------------------------------------------------
+
+_G.OrbyteSession = true
+local okRun, errRun = xpcall(main, function(e)
+	return tostring(e)
+end)
+if not okRun then
+	_G.OrbyteSession = nil
+	local errMsg = tostring(errRun)
+	local prev = _G.OrbyteNotif
+	if type(prev) == "table" and type(prev.Push) == "function" then
+		pcall(prev.Push, prev, {
+			Title = "Orbyte",
+			Message = "Failed to start: " .. errMsg,
+			Type = "Error",
+			Duration = 8,
+		})
+	end
+	warn("[Orbyte] Failed to start: " .. errMsg)
+end
