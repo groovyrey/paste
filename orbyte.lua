@@ -332,6 +332,7 @@ local FEATURE_DEFS = {
 	WalkSpeed = { label = "Speed Boost", args = { 32 } },
 	Noclip = { label = "Noclip" },
 	ESP = { label = "ESP" },
+	SaePromptInfo = { label = "Prompt Inspector" },
 	SaeCopyPos = {
 		label = "Save Root Position",
 		hint = "Position…",
@@ -368,6 +369,65 @@ local function openModernUI(uiTitle, features)
 	end)
 
 	--// REGISTER ORBYTE FEATURES ------------------------------------------
+
+	-- SAE Prompt Inspector: dumps every prompt opened/closed by the game to a
+	-- toast. Steal An Egg preset only.
+	Loader.Register("SaePromptInfo", function()
+		local PromptService = game:GetService("PromptService")
+
+		local function describe(prompt)
+			local parts = {}
+			local okProps, props = pcall(function()
+				return prompt:GetProperties()
+			end)
+			if okProps and type(props) == "table" then
+				for _, prop in ipairs(props) do
+					local okValue, value = pcall(function()
+						local v = prompt[prop.Name]
+						if typeof and typeof(v) == "EnumItem" then
+							return v.Name
+						end
+						if typeof then
+							if typeof(v) == "Instance" then
+								return v:GetFullName()
+							end
+							if typeof(v) == "Color3" or typeof(v) == "Vector3" or typeof(v) == "UDim2" then
+								return tostring(v)
+							end
+						end
+						return tostring(v)
+					end)
+					if okValue then
+						local s = tostring(value)
+						if s ~= "nil" and s ~= "" and #s < 60 then
+							table.insert(parts, prop.Name .. "=" .. s)
+						end
+					end
+				end
+			else
+				table.insert(parts, "PromptType=" .. tostring(prompt.PromptType))
+				table.insert(parts, "CorrelationId=" .. tostring(prompt.CorrelationId))
+			end
+			return table.concat(parts, " · ")
+		end
+
+		local connections = {}
+		table.insert(connections, PromptService.PromptTriggered:Connect(function(prompt, user)
+			local who = user and (user.Name .. "(" .. user.UserId .. ")") or "self"
+			local msg = describe(prompt)
+			if #msg > 400 then msg = string.sub(msg, 1, 400) .. "…" end
+			showNotif("Prompt opened · " .. who, msg, "Info", 8)
+		end))
+		table.insert(connections, PromptService.PromptEnded:Connect(function(prompt)
+			showNotif("Prompt closed", "CorrelationId=" .. tostring(prompt.CorrelationId), "Info", 4)
+		end))
+
+		return function()
+			for _, c in ipairs(connections) do
+				c:Disconnect()
+			end
+		end
+	end)
 
 	-- Noclip: keeps every character part non-collidable while on.
 	Loader.Register("Noclip", function()
