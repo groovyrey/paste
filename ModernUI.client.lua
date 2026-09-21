@@ -2,41 +2,48 @@
 	ModernUI.client.lua
 	Example LocalScript that uses the ModernUI module (ModernUI.lua).
 
-	Loads the module from the executor's file API (saving it there first if
-	missing) and falls back to fetching it from this repo. Then builds a demo
-	window exactly like the old standalone ModernUI.client.lua did.
+	Always fetches the module fresh from this repo and writes it into the
+	Orbyte folder (falling back to the cached copy when offline), so edits are
+	picked up on every run. Then builds a demo window like the old standalone
+	ModernUI.client.lua did.
 --]]
 
-local MODULE_PATH = "ModernUI.lua"
+local FOLDER = "Orbyte"
+local MODULE_PATH = FOLDER .. "/ModernUI.lua"
 local MODULE_URL = "https://raw.githubusercontent.com/groovyrey/paste/main/ModernUI.lua"
 
-local function ensureModuleFile()
-	if type(writefile) ~= "function" then return end
-	if type(isfile) == "function" and isfile(MODULE_PATH) then return end
-	local ok, src = pcall(function()
-		return game:HttpGet(MODULE_URL, true)
+local function ensureFolder()
+	if type(isfolder) ~= "function" then return end
+	if type(makefolder) ~= "function" then return end
+	pcall(function()
+		if not isfolder(FOLDER) then
+			makefolder(FOLDER)
+		end
 	end)
-	if ok and type(src) == "string" and #src > 0 then
-		pcall(function() writefile(MODULE_PATH, src) end)
-	end
 end
 
 local function loadModernUI()
-	ensureModuleFile()
+	local src
 
-	local mod
-	local ok = pcall(function()
-		if type(readfile) ~= "function" then error("no executor file API") end
-		local src = readfile(MODULE_PATH)
-		if type(src) ~= "string" or #src == 0 then error("module file empty") end
-		local fn = assert(loadstring(src))
-		mod = fn()
+	local ok, fetched = pcall(function()
+		return game:HttpGet(MODULE_URL, true)
 	end)
-	if ok and type(mod) == "table" then
-		return mod
+	if ok and type(fetched) == "string" and #fetched > 0 then
+		src = fetched
+		if type(writefile) == "function" then
+			ensureFolder()
+			pcall(function() writefile(MODULE_PATH, src) end)
+		end
+	elseif type(readfile) == "function" then
+		local okCached, cached = pcall(function()
+			return readfile(MODULE_PATH)
+		end)
+		if okCached and type(cached) == "string" and #cached > 0 then
+			src = cached
+		end
 	end
 
-	local src = assert(game:HttpGet(MODULE_URL, true))
+	assert(type(src) == "string" and #src > 0, "ModernUI.module: no source available")
 	local fn = assert(loadstring(src))
 	return fn()
 end
