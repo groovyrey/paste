@@ -26,6 +26,23 @@ local API_BASE = "https://orbyte-core.appleflux.workers.dev"
 local TOKEN_PATH = FOLDER .. "/token.txt"
 local DEVICE_PATH = FOLDER .. "/device.id"
 
+--// SESSION GUARD ----------------------------------------------------------
+-- Strict single-instance: executing the entry again in the same session must
+-- not stack a second copy of Orbyte (windows, key gate, features, ...).
+local PREV_NOTIF = _G.OrbyteNotif
+if _G.OrbyteSession then
+	print("[Orbyte] Already running in this session — skipping duplicate.")
+	if type(PREV_NOTIF) == "table" and type(PREV_NOTIF.Push) == "function" then
+		pcall(PREV_NOTIF.Push, PREV_NOTIF, {
+			Title = "Orbyte",
+			Message = "Already running — only one session is allowed.",
+			Type = "Warning",
+		})
+	end
+	return
+end
+_G.OrbyteSession = true
+
 --// ORBYTE FOLDER CHECK ---------------------------------------------------
 
 -- Ensures the Orbyte folder exists.
@@ -284,6 +301,7 @@ do
 		local okNew, inst = pcall(Notif.new, Notif, { Theme = ModernUI.Theme })
 		if okNew and inst then
 			notify = inst
+			_G.OrbyteNotif = inst
 		end
 	end
 end
