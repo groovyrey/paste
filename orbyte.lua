@@ -331,12 +331,27 @@ local FEATURE_DEFS = {
 	WalkSpeed = { label = "Speed Boost", args = { 32 } },
 	Noclip = { label = "Noclip" },
 	ESP = { label = "ESP" },
+	SaeCopyPos = {
+		label = "Save Root Position",
+		hint = "Position…",
+		kind = "button",
+		action = function()
+			local character = LocalPlayer.Character
+			local root = character and character:FindFirstChild("HumanoidRootPart")
+			if not root then
+				showNotif("Copy position", "No character root found.", "Warning")
+				return nil
+			end
+			local pos = root.Position
+			return ("%.2f, %.2f, %.2f"):format(pos.X, pos.Y, pos.Z)
+		end,
+	},
 }
 
 local DEFAULT_FEATURES = { "InfiniteJump", "WalkSpeed", "Noclip", "ESP" }
 
-local function openModernUI(features)
-	local ui = ModernUI.new({ Title = "Orbyte", Size = MAIN_SIZE })
+local function openModernUI(uiTitle, features)
+	local ui = ModernUI.new({ Title = uiTitle or "Orbyte", Size = MAIN_SIZE })
 
 	local okLoader, Loader = pcall(loadFeatureLoader)
 	if not (okLoader and type(Loader) == "table") then
@@ -438,17 +453,28 @@ local function openModernUI(features)
 			local def = FEATURE_DEFS[name] or {}
 			local label = def.label or tostring(name)
 			local args = def.args or {}
-			ui:AddToggle(label, Loader.IsEnabled(name), function(state)
-				if state then
-					Loader.Enable(name, unpackArgs(args))
-				else
-					Loader.Disable(name)
-				end
-			end)
+
+			if def.kind == "button" and type(def.action) == "function" then
+				local result = ui:AddTextBox(def.hint or "—")
+				ui:AddButton(label, function()
+					local value = def.action()
+					if value then
+						result.Text = tostring(value)
+					end
+				end)
+			else
+				ui:AddToggle(label, Loader.IsEnabled(name), function(state)
+					if state then
+						Loader.Enable(name, unpackArgs(args))
+					else
+						Loader.Disable(name)
+					end
+				end)
+			end
 		end
 	end
 
-	ui:AddLabel("Orbyte v1.0")
+	ui:AddLabel(uiTitle or "Orbyte v1.0")
 	ui:AddLabel("Features")
 	buildToggles(features or DEFAULT_FEATURES)
 end
@@ -467,8 +493,15 @@ local function openGameChooser(config)
 
 	for _, game in ipairs(games) do
 		local name = tostring(game.name or "?")
+		local gameFeatures = game.features
 		ui:AddButton(name, function()
-			showNotif("Coming soon", name .. " preset", "Warning")
+			if type(gameFeatures) == "table" and #gameFeatures > 0 then
+				ui:Destroy()
+				showNotif(name, "Preset loaded.", "Success")
+				openModernUI("Orbyte — " .. name, gameFeatures)
+			else
+				showNotif("Coming soon", name .. " preset", "Warning")
+			end
 		end)
 	end
 
@@ -479,7 +512,7 @@ local function openGameChooser(config)
 	ui:AddButton(univLabel, function()
 		ui:Destroy()
 		showNotif("Orbyte", "Universal loaded.", "Success")
-		openModernUI(universal.features)
+		openModernUI("Orbyte", universal.features)
 	end)
 end
 

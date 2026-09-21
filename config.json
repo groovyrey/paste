@@ -1,11 +1,12 @@
 {
 	"universal": {
 		"label": "Universal — Launch Orbyte",
-		"features": ["InfiniteJump", "WalkSpeed", "Noclip", "ESP"]
+		"features": ["InfiniteJump", "WalkSpeed", "Noclip", "ESP", "SaeCopyPos"]
 	},
 	"games": [
-		{ "id": 2753915549, "name": "Blox Fruits" },
-		{ "id": 4924922222, "name": "Brookhaven RP" },
-		{ "id": 142823291, "name": "Murder Mystery 2" }
+		{ "id": 2753915549, "name": "Blox Fruits", "features": ["InfiniteJump", "WalkSpeed", "Noclip", "ESP"] },
+		{ "id": 4924922222, "name": "Brookhaven RP", "features": ["WalkSpeed", "Noclip"] },
+		{ "id": 142823291, "name": "Murder Mystery 2", "features": ["InfiniteJump", "WalkSpeed", "ESP"] },
+		{ "id": 107778070777162, "name": "Steal An Egg", "features": ["SaeCopyPos", "WalkSpeed"] }
 	]
 }
