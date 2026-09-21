@@ -130,6 +130,7 @@ local Window = create("Frame", {
 	Size = UDim2.fromOffset(340, 420),
 	Position = UDim2.new(0.5, -170, 0.5, -210),
 	BackgroundColor3 = Theme.Background,
+	BackgroundTransparency = 1,
 	Parent = ScreenGui,
 }, { windowCorner, stroke(Theme.Border, 1) })
 
