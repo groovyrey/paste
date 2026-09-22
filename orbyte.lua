@@ -215,7 +215,7 @@ local function loadNotificationSystem()
 	return nil
 end
 
--- SAE.lua registers its own features ("SAE", "SAE:PromptWatcher") against the
+-- SAE.lua registers its own features ("SAE", "InstantTP") against the
 -- loader/modules we pass it. Same load pattern: fresh fetch, cache, fallback.
 local function loadSAEFeatures()
 	local src

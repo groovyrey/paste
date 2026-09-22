@@ -8,7 +8,7 @@
 	character root part position into the textbox as a ready-to-paste
 	Vector3.new(x, y, z) string.
 
-	"SAE:PromptWatcher" — detects a successful egg steal by watching the
+	"InstantTP" — detects a successful egg steal by watching the
 	DropHeldEgg instance that Roblox parents into the same folder as
 	ProximityPrompts (PlayerGui). The egg-drop only happens once a steal fully
 	completes, and DropHeldEgg appears earlier than the RunBackEffects GUI —
@@ -28,8 +28,8 @@
 		Loader.Enable("SAE")               -- shows the position-saver window
 		Loader.Disable("SAE")              -- tears it down
 
-		Loader.Enable("SAE:PromptWatcher")  -- start toasting on prompt triggers
-		Loader.Disable("SAE:PromptWatcher") -- stop watching
+		Loader.Enable("InstantTP")  -- start toasting on prompt triggers
+		Loader.Disable("InstantTP") -- stop watching
 
 		Loader("SAE")                       -- toggles either one
 --]]
@@ -88,10 +88,10 @@ return function(Loader, ModernUI, NotificationSystem)
 		-- ProximityPrompts (PlayerGui). Roblox parents a DropHeldEgg instance in
 		-- the moment a steal fully completes, earlier than RunBackEffects, so its
 		-- appearance is the earliest reliable cue we have.
-		Loader.Register("SAE:PromptWatcher", function()
+		Loader.Register("InstantTP", function()
 			local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 			local notify = NotificationSystem.new()
-			notify:Info("SAE", "Prompt watcher started", 2)
+			notify:Info("InstantTP", "Started", 2)
 
 			-- Root folder Roblox keeps ProximityPrompts under. DropHeldEgg lives
 			-- beside it, so its real parent is whatever parents ProximityPrompts.

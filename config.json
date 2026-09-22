@@ -4,6 +4,6 @@
 		"features": ["InfiniteJump", "WalkSpeed", "Noclip", "ESP", "SaeCopyPos"]
 	},
 	"games": [
-		{ "id": 107778070777162, "name": "Steal An Egg", "features": ["SAE", "SaeCopyPos", "SAE:PromptWatcher", "WalkSpeed", "Noclip"] }
+		{ "id": 107778070777162, "name": "Steal An Egg", "features": ["SAE", "SaeCopyPos", "InstantTP", "WalkSpeed", "Noclip"] }
 	]
 }
