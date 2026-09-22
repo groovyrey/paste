@@ -8,18 +8,11 @@
 	character root part position into the textbox as a ready-to-paste
 	Vector3.new(x, y, z) string.
 
-	"SAE:PromptWatcher" — watches the default Roblox ProximityPrompt GUI
-	directly instead of ProximityPromptService.PromptTriggered:
-
-		PlayerGui.ProximityPrompts.Default
-			└── <prompt GUI> (appears when the player enters a prompt's range)
-				└── ... InputFrame > Frame > ProgressBar > Progress (NumberValue)
-
-	It watches PlayerGui.ProximityPrompts.Default for a child being added
-	(the prompt becoming visible), then watches that child's nested
-	"Progress" NumberValue; when Progress.Value reaches 1, the prompt has
-	been held to completion (triggered), and a toast is pushed via
-	NotificationSystem.
+	"SAE:PromptWatcher" — detects a successful egg steal by watching the
+	RunBackEffects ScreenGui that Roblox keeps in the same parent as
+	ProximityPrompts (PlayerGui). It ships with Enabled=false; Roblox flips it
+	to Enabled=true the instant the steal animation fires, and that flip is the
+	trigger. On trigger we instantly teleport to the egg spot and back.
 
 	This file does not register itself automatically — pass in your Loader,
 	ModernUI, and NotificationSystem references so it stays decoupled from
@@ -57,16 +50,6 @@ local function formatPosition(pos)
 	return string.format("Vector3.new(%.3f, %.3f, %.3f)", pos.X, pos.Y, pos.Z)
 end
 
--- Pulls ObjectText/ActionText back out of a prompt's default GUI instance,
--- falling back to sensible labels when the prompt author left them blank.
-local function describePromptGui(promptGui)
-	local objectLabel = promptGui:FindFirstChild("ObjectText", true)
-	local actionLabel = promptGui:FindFirstChild("ActionText", true)
-	local objectText = (objectLabel and objectLabel.Text ~= "" and objectLabel.Text) or "Object"
-	local actionText = (actionLabel and actionLabel.Text ~= "" and actionLabel.Text) or "Interact"
-	return objectText, actionText
-end
-
 return function(Loader, ModernUI, NotificationSystem)
 	assert(Loader, "SAE requires a FeatureLoader reference")
 	assert(ModernUI, "SAE requires a ModernUI reference")
@@ -100,106 +83,86 @@ return function(Loader, ModernUI, NotificationSystem)
 		end
 	end)
 
-	-- Real-time prompt trigger watcher: detects the default ProximityPrompt
-	-- GUI appearing (prompt in range), then watches its Progress NumberValue
-	-- for reaching 1 (held to completion == triggered), and toasts.
+	-- RunBackEffects-based trigger watcher: sits in the same parent as the
+	-- ProximityPrompts folder. Roblox leaves it Enabled=false and flips it to
+	-- Enabled=true the moment a steal fully completes — that flip is our cue.
 	Loader.Register("SAE:PromptWatcher", function()
 		local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 		local notify = NotificationSystem.new()
 		notify:Info("SAE", "Prompt watcher started", 2)
 
-		local connections = {} -- every RBXScriptConnection made here, disconnected on stop
-		local progressConnections = {} -- [promptGui] = its Progress-value connection
-		local triggered = {} -- [promptGui] = true once toasted, guards against re-firing
+		-- Root folder Roblox keeps ProximityPrompts under. RunBackEffects lives
+		-- beside it, so its real parent is whatever parents ProximityPrompts.
+		local proximityRoot = playerGui:FindFirstChild("ProximityPrompts")
+		local rootParent = proximityRoot and proximityRoot.Parent or playerGui
 
-		-- Connects callback(child) for every existing and future direct child of
-		-- `parent` named `name`. ProximityPrompts/Default is created lazily by
-		-- Roblox, so this has to tolerate the folder not existing yet.
-		local function watchChildNamed(parent, name, callback)
-			local existing = parent:FindFirstChild(name)
-			if existing then
-				callback(existing)
+		local TELEPORT_TO = Vector3.new(542.18, 70.67, -349.22)
+		local TELEPORT_BACK_AFTER = 0.5 -- seconds at the egg spot before returning
+
+		local connections = {} -- every RBXScriptConnection made here, disconnected on stop
+		local triggered = {} -- [gui] = true once fired, re-armed when it flips back off
+
+		local function instantTeleport()
+			local rootPart = getRootPart()
+			if not rootPart then return end
+			local saved = rootPart.Position
+			rootPart.CFrame = CFrame.new(TELEPORT_TO)
+			wait(TELEPORT_BACK_AFTER)
+			if rootPart.Parent then
+				rootPart.CFrame = CFrame.new(saved)
 			end
-			table.insert(connections, parent.ChildAdded:Connect(function(child)
-				if child.Name == name then
-					callback(child)
-				end
-			end))
 		end
 
-		-- promptGui is whatever Default parents in when a prompt enters range.
-		-- Its Progress NumberValue climbs 0 -> 1 while held; 1 means triggered.
-		local function watchPromptGui(promptGui)
-			if progressConnections[promptGui] then
+		-- gui is the RunBackEffects ScreenGui. When Enabled goes true the steal
+		-- finished: toast + instantly teleport to the egg spot and back.
+		local function watchRunBackEffects(gui)
+			if triggered[gui] then
 				return -- already watching this one
 			end
+			triggered[gui] = false
 
-			-- Progress lives a few levels deep (InputFrame > Frame > ProgressBar
-			-- > Progress) and might not exist the instant the GUI is added.
-			local progress = promptGui:FindFirstChild("Progress", true)
-			if not progress then
-				progress = promptGui:WaitForChild("Progress", 2)
-			end
-			if not progress or not progress:IsA("NumberValue") then
-				return
-			end
-
-			local TELEPORT_TO = Vector3.new(542.18, 70.67, -349.22)
-			local TELEPORT_START_DELAY = 1 -- seconds before heading to the egg spot
-			local TELEPORT_BACK_AFTER = 0.5 -- seconds at the egg spot before returning
-
-			local function teleportToEggAndBack()
-				wait(TELEPORT_START_DELAY)
-				local rootPart = getRootPart()
-				if not rootPart then return end
-				local saved = rootPart.Position
-				rootPart.CFrame = CFrame.new(TELEPORT_TO)
-				wait(TELEPORT_BACK_AFTER)
-				if rootPart.Parent then
-					rootPart.CFrame = CFrame.new(saved)
+			table.insert(connections, gui:GetPropertyChangedSignal("Enabled"):Connect(function()
+				if gui.Enabled then
+					triggered[gui] = true
+					notify:Success("Egg", "Steal triggered", 3)
+					spawn(instantTeleport)
+				else
+					triggered[gui] = false -- re-arm for the next steal
 				end
+			end))
+
+			-- If the GUI is created already-enabled (odd edge case), fire once.
+			if gui.Enabled then
+				triggered[gui] = true
+				notify:Success("Egg", "Steal triggered", 3)
+				spawn(instantTeleport)
 			end
 
-			local function checkProgress()
-				if progress.Value >= 1 and not triggered[promptGui] then
-					triggered[promptGui] = true
-					local objectText, actionText = describePromptGui(promptGui)
-					if actionText == "Steal" then
-						notify:Success(objectText, "Steal triggered", 3)
-						spawn(teleportToEggAndBack)
-					end
-				end
-			end
-
-			progressConnections[promptGui] = progress:GetPropertyChangedSignal("Value"):Connect(checkProgress)
-			checkProgress() -- covers the (unlikely) case it's already at 1 when we hook in
-
-			-- Clean up once the prompt's GUI is torn down (out of range, prompt disabled, etc).
-			table.insert(connections, promptGui.AncestryChanged:Connect(function(_, parent)
+			-- Clean up once the GUI is torn down.
+			table.insert(connections, gui.AncestryChanged:Connect(function(_, parent)
 				if parent == nil then
-					if progressConnections[promptGui] then
-						progressConnections[promptGui]:Disconnect()
-						progressConnections[promptGui] = nil
-					end
-					triggered[promptGui] = nil
+					triggered[gui] = nil
 				end
 			end))
 		end
 
-		watchChildNamed(playerGui, "ProximityPrompts", function(proximityPrompts)
-			watchChildNamed(proximityPrompts, "Default", function(default)
-				for _, existing in ipairs(default:GetChildren()) do
-					watchPromptGui(existing)
+		-- RunBackEffects appears lazily, so tolerate it not existing yet.
+		local function attach(parent)
+			local existing = parent:FindFirstChild("RunBackEffects")
+			if existing then
+				watchRunBackEffects(existing)
+			end
+			table.insert(connections, parent.ChildAdded:Connect(function(child)
+				if child.Name == "RunBackEffects" then
+					watchRunBackEffects(child)
 				end
-				table.insert(connections, default.ChildAdded:Connect(watchPromptGui))
-			end)
-		end)
+			end))
+		end
+
+		attach(rootParent)
 
 		return function()
 			for _, c in ipairs(connections) do
-				c:Disconnect()
-			end
-			for _, c in pairs(progressConnections) do
 				c:Disconnect()
 			end
 			notify:Destroy()
