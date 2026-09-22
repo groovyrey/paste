@@ -102,7 +102,7 @@ return function(Loader, ModernUI, NotificationSystem)
 			local TELEPORT_BACK_AFTER = 0.5 -- seconds at the egg spot before returning
 
 			local connections = {} -- every RBXScriptConnection made here, disconnected on stop
-			local triggered = false -- once fired; re-armed when the instance goes away
+			local fired = {} -- [inst] = true; fresh instances are each a new steal
 
 			local function instantTeleport()
 				local rootPart = getRootPart()
@@ -115,33 +115,35 @@ return function(Loader, ModernUI, NotificationSystem)
 				end
 			end
 
-			local function fire()
-				if triggered then return end
-				triggered = true
+			local function fire(inst)
+				if fired[inst] then return end
+				fired[inst] = true
 				notify:Success("Egg", "Steal triggered", 3)
 				spawn(instantTeleport)
 			end
 
 			-- DropHeldEgg is a ScreenGui parented into the folder the instant the
 			-- egg drop starts — that parented-in IS our trigger (it's earlier than
-			-- any Enabled flip). If it already exists disabled, fall back to an
-			-- Enabled watch. It is torn down afterwards, which re-arms us.
+			-- any Enabled flip). Each steal parents a fresh instance, so firing is
+			-- per-instance: a newly arrived GUI always means a new steal. If one
+			-- exists already disabled, fall back to an Enabled watch.
 			local function watchDropHeldEgg(inst)
 				if type(inst.Enabled) == "boolean" and not inst.Enabled then
-					table.insert(connections, inst:GetPropertyChangedSignal("Enabled"):Connect(function()
+					table.insert(connections, inst.Changed:Connect(function(prop)
+						if prop ~= "Enabled" then return end
 						if inst.Enabled then
-							fire()
+							fire(inst) -- became active: fire once per enabled-on
 						else
-							triggered = false -- flipped off: arm for the next steal
+							fired[inst] = nil -- flipped off: allows re-fire next time
 						end
 					end))
 				else
-					fire() -- just appeared (or is enabled already)
+					fire(inst) -- just appeared (or is enabled already)
 				end
 
 				table.insert(connections, inst.AncestryChanged:Connect(function(_, parent)
 					if parent == nil then
-						triggered = false -- egg dropped + cleared; arm for the next
+						fired[inst] = nil -- gone; forget so a later re-parent re-fires
 					end
 				end))
 			end
