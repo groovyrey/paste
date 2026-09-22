@@ -9,10 +9,11 @@
 	Vector3.new(x, y, z) string.
 
 	"SAE:PromptWatcher" — detects a successful egg steal by watching the
-	RunBackEffects ScreenGui that Roblox keeps in the same parent as
-	ProximityPrompts (PlayerGui). It ships with Enabled=false; Roblox flips it
-	to Enabled=true the instant the steal animation fires, and that flip is the
-	trigger. On trigger we instantly teleport to the egg spot and back.
+	DropHeldEgg instance that Roblox parents into the same folder as
+	ProximityPrompts (PlayerGui). The egg-drop only happens once a steal fully
+	completes, and DropHeldEgg appears earlier than the RunBackEffects GUI —
+	its arrival is the trigger. On trigger we instantly teleport to the egg
+	spot and back.
 
 	This file does not register itself automatically — pass in your Loader,
 	ModernUI, and NotificationSystem references so it stays decoupled from
@@ -83,89 +84,85 @@ return function(Loader, ModernUI, NotificationSystem)
 		end
 	end)
 
-	-- RunBackEffects-based trigger watcher: sits in the same parent as the
-	-- ProximityPrompts folder. Roblox leaves it Enabled=false and flips it to
-	-- Enabled=true the moment a steal fully completes — that flip is our cue.
-	Loader.Register("SAE:PromptWatcher", function()
-		local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
-		local notify = NotificationSystem.new()
-		notify:Info("SAE", "Prompt watcher started", 2)
+-- DropHeldEgg-based trigger watcher: lives in the same folder as
+		-- ProximityPrompts (PlayerGui). Roblox parents a DropHeldEgg instance in
+		-- the moment a steal fully completes, earlier than RunBackEffects, so its
+		-- appearance is the earliest reliable cue we have.
+		Loader.Register("SAE:PromptWatcher", function()
+			local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
+			local notify = NotificationSystem.new()
+			notify:Info("SAE", "Prompt watcher started", 2)
 
-		-- Root folder Roblox keeps ProximityPrompts under. RunBackEffects lives
-		-- beside it, so its real parent is whatever parents ProximityPrompts.
-		local proximityRoot = playerGui:FindFirstChild("ProximityPrompts")
-		local rootParent = proximityRoot and proximityRoot.Parent or playerGui
+			-- Root folder Roblox keeps ProximityPrompts under. DropHeldEgg lives
+			-- beside it, so its real parent is whatever parents ProximityPrompts.
+			local proximityRoot = playerGui:FindFirstChild("ProximityPrompts")
+			local rootParent = proximityRoot and proximityRoot.Parent or playerGui
 
-		local TELEPORT_TO = Vector3.new(542.18, 70.67, -349.22)
-		local TELEPORT_BACK_AFTER = 0.5 -- seconds at the egg spot before returning
+			local TELEPORT_TO = Vector3.new(542.18, 70.67, -349.22)
+			local TELEPORT_BACK_AFTER = 0.5 -- seconds at the egg spot before returning
 
-		local connections = {} -- every RBXScriptConnection made here, disconnected on stop
-		local triggered = {} -- [gui] = true once fired, re-armed when it flips back off
+			local connections = {} -- every RBXScriptConnection made here, disconnected on stop
+			local triggered = false -- once fired; re-armed when the instance goes away
 
-		local function instantTeleport()
-			local rootPart = getRootPart()
-			if not rootPart then return end
-			local saved = rootPart.Position
-			rootPart.CFrame = CFrame.new(TELEPORT_TO)
-			wait(TELEPORT_BACK_AFTER)
-			if rootPart.Parent then
-				rootPart.CFrame = CFrame.new(saved)
-			end
-		end
-
-		-- gui is the RunBackEffects ScreenGui. When Enabled goes true the steal
-		-- finished: toast + instantly teleport to the egg spot and back.
-		local function watchRunBackEffects(gui)
-			if triggered[gui] then
-				return -- already watching this one
-			end
-			triggered[gui] = false
-
-			table.insert(connections, gui:GetPropertyChangedSignal("Enabled"):Connect(function()
-				if gui.Enabled then
-					triggered[gui] = true
-					notify:Success("Egg", "Steal triggered", 3)
-					spawn(instantTeleport)
-				else
-					triggered[gui] = false -- re-arm for the next steal
+			local function instantTeleport()
+				local rootPart = getRootPart()
+				if not rootPart then return end
+				local saved = rootPart.Position
+				rootPart.CFrame = CFrame.new(TELEPORT_TO)
+				wait(TELEPORT_BACK_AFTER)
+				if rootPart.Parent then
+					rootPart.CFrame = CFrame.new(saved)
 				end
-			end))
+			end
 
-			-- If the GUI is created already-enabled (odd edge case), fire once.
-			if gui.Enabled then
-				triggered[gui] = true
+			local function fire()
+				if triggered then return end
+				triggered = true
 				notify:Success("Egg", "Steal triggered", 3)
 				spawn(instantTeleport)
 			end
 
-			-- Clean up once the GUI is torn down.
-			table.insert(connections, gui.AncestryChanged:Connect(function(_, parent)
-				if parent == nil then
-					triggered[gui] = nil
+			-- DropHeldEgg is a ScreenGui parented into the folder the instant the
+			-- egg drop starts — that parented-in IS our trigger (it's earlier than
+			-- any Enabled flip). If it already exists disabled, fall back to an
+			-- Enabled watch. It is torn down afterwards, which re-arms us.
+			local function watchDropHeldEgg(inst)
+				if type(inst.Enabled) == "boolean" and not inst.Enabled then
+					table.insert(connections, inst:GetPropertyChangedSignal("Enabled"):Connect(function()
+						if inst.Enabled then fire() end
+					end))
+				else
+					fire() -- just appeared (or is enabled already)
 				end
-			end))
-		end
 
-		-- RunBackEffects appears lazily, so tolerate it not existing yet.
-		local function attach(parent)
-			local existing = parent:FindFirstChild("RunBackEffects")
-			if existing then
-				watchRunBackEffects(existing)
+				table.insert(connections, inst.AncestryChanged:Connect(function(_, parent)
+					if parent == nil then
+						triggered = false -- egg dropped + cleared; arm for the next
+					end
+				end))
 			end
-			table.insert(connections, parent.ChildAdded:Connect(function(child)
-				if child.Name == "RunBackEffects" then
-					watchRunBackEffects(child)
+
+			-- DropHeldEgg is (re)parented lazily on every steal, so it may not
+			-- exist yet — watch for arrivals.
+			local function attach(parent)
+				local existing = parent:FindFirstChild("DropHeldEgg")
+				if existing then
+					watchDropHeldEgg(existing)
 				end
-			end))
-		end
-
-		attach(rootParent)
-
-		return function()
-			for _, c in ipairs(connections) do
-				c:Disconnect()
+				table.insert(connections, parent.ChildAdded:Connect(function(child)
+					if child.Name == "DropHeldEgg" then
+						watchDropHeldEgg(child)
+					end
+				end))
 			end
-			notify:Destroy()
-		end
-	end)
-end
+
+			attach(rootParent)
+
+			return function()
+				for _, c in ipairs(connections) do
+					c:Disconnect()
+				end
+				notify:Destroy()
+			end
+		end)
+	end
