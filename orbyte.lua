@@ -404,26 +404,27 @@ local FEATURE_DEFS = {
 
 local DEFAULT_FEATURES = { "InfiniteJump", "WalkSpeed", "Noclip", "ESP" }
 
-local function openModernUI(uiTitle, features)
-	local ui = ModernUI.new({ Title = uiTitle or "Orbyte", Size = MAIN_SIZE })
+-- ONE shared Loader for the whole session. Every window must drive this same
+-- instance: creating a fresh Loader per window (and re-registering features)
+-- spawns duplicate Noclip/ESP instances that fight over the same parts and
+-- each restore only their own state — Noclip "stays on after being turned
+-- off" and other features behave randomly.
+local SharedLoader = nil
+local loaderLoaded = false
+
+local function getSharedLoader()
+	if loaderLoaded then return SharedLoader end
+	loaderLoaded = true
 
 	local okLoader, Loader = pcall(loadFeatureLoader)
 	if not (okLoader and type(Loader) == "table") then
-		ui:AddButton("Collapse / Expand", function()
-			ui:ToggleCollapsed()
-		end)
-		ui:AddLabel("FeatureLoader unavailable.")
-		return
+		return nil
 	end
+	SharedLoader = Loader
+	return Loader
+end
 
-	ui:AddButton("Collapse / Expand", function()
-		ui:ToggleCollapsed()
-	end)
-
-	--// REGISTER ORBYTE FEATURES ------------------------------------------
-
-	-- SAE.lua registers its own features ("SAE", "SAE:PromptWatcher") against the
-	-- loader + modules we pass it.
+local function registerOrbyteFeatures(Loader)
 	local okSAE, SAEFn = pcall(loadSAEFeatures)
 	if okSAE and type(SAEFn) == "function" then
 		pcall(SAEFn, Loader, ModernUI, NotifModule)
@@ -504,8 +505,37 @@ local function openModernUI(uiTitle, features)
 			end
 		end
 	end)
+end
 
-	--// BUILD UI -----------------------------------------------------------
+-- All Orbyte features (built-ins + SAE) registered exactly once against the
+-- shared loader, so no duplicate cleanup/instances can accumulate.
+local featuresRegistered = false
+
+local function ensureRegistered()
+	if featuresRegistered then return true end
+	local Loader = getSharedLoader()
+	if not Loader then return false end
+	registerOrbyteFeatures(Loader)
+	featuresRegistered = true
+	return true
+end
+
+local function openModernUI(uiTitle, features)
+	local ui = ModernUI.new({ Title = uiTitle or "Orbyte", Size = MAIN_SIZE })
+
+	ui:AddButton("Collapse / Expand", function()
+		ui:ToggleCollapsed()
+	end)
+
+	if not ensureRegistered() then
+		ui:AddLabel("FeatureLoader unavailable.")
+		return
+	end
+
+	-- Fresh window = fresh state: nothing may leak over from a previous window
+	-- (which was the bug behind "Noclip still on while its toggle is off").
+	local Loader = getSharedLoader()
+	Loader.DisableAll()
 
 	local unpackArgs = table.unpack or unpack
 
@@ -529,7 +559,7 @@ local function openModernUI(uiTitle, features)
 					end
 				end)
 			else
-				ui:AddToggle(label, Loader.IsEnabled(name), function(state)
+				ui:AddToggle(label, false, function(state)
 					if state then
 						Loader.Enable(name, unpackArgs(args))
 					else
