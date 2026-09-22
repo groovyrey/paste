@@ -577,106 +577,137 @@ end
 
 -- Game chooser shown after a valid key. Presets and the Universal label come
 -- from config.json on GitHub; each preset is a stub until it ships a loader.
-local function openGameChooser(config)
-	local ui = ModernUI.new({ Title = "Orbyte — Game", Size = CHOOSER_SIZE })
-
-	ui:AddLabel("Choose a game")
-
-	local games = config and type(config.games) == "table" and config.games or {}
-	if #games == 0 then
-		ui:AddLabel("No presets configured yet.")
-	end
-
-	for _, game in ipairs(games) do
-		local name = tostring(game.name or "?")
-		local gameFeatures = game.features
-		ui:AddButton(name, function()
-			if type(gameFeatures) == "table" and #gameFeatures > 0 then
-				ui:Destroy()
-				showNotif(name, "Preset loaded.", "Success")
-				openModernUI("Orbyte — " .. name, gameFeatures)
-			else
-				showNotif("Coming soon", name .. " preset", "Warning")
-			end
-		end)
-	end
-
-	ui:AddLabel("Universal")
-
-	local universal = config and type(config.universal) == "table" and config.universal or {}
-	local univLabel = tostring(universal.label or "Universal — Launch Orbyte")
-	ui:AddButton(univLabel, function()
-		ui:Destroy()
-		showNotif("Orbyte", "Universal loaded.", "Success")
-		openModernUI("Orbyte", universal.features)
-	end)
-end
-
 -- Load GitHub config once and keep the client working if it fails.
 local CONFIG = loadConfig()
 
--- Authenticated sessions skip the splash entirely.
-if tryBoot() then
-	showNotif("Orbyte", "Welcome back.", "Success")
-	openGameChooser(CONFIG)
-	return
+local games = CONFIG and type(CONFIG.games) == "table" and CONFIG.games or {}
+local universal = CONFIG and type(CONFIG.universal) == "table" and CONFIG.universal or {}
+local universalFeatures = type(universal.features) == "table" and universal.features or nil
+local univLabel = tostring(universal.label or "Universal — Launch Orbyte")
+
+-- The window actually opened after the key gate passes.
+local launchTitle = "Orbyte"
+local launchFeatures = universalFeatures
+
+local function launchOrbyte()
+	local features = launchFeatures
+	if type(features) ~= "table" or #features == 0 then
+		features = universalFeatures
+	end
+	if type(features) == "table" and #features > 0 then
+		showNotif("Orbyte", "Preset loaded.", "Success")
+		openModernUI(launchTitle, features)
+	else
+		showNotif("Orbyte", "No presets configured yet.", "Warning")
+	end
 end
 
--- Key gate: folder status + key entry + verify.
-local splash = ModernUI.new({ Title = "Orbyte", Size = SPLASH_SIZE })
-
-local folderLabel = splash:AddLabel(folderMessage)
-folderLabel.TextColor3 = folderOk
-	and Color3.fromRGB(130, 220, 150)
-	or Color3.fromRGB(255, 150, 150)
-
-local apiLabel = splash:AddLabel("Enter your Orbyte key to continue.")
-apiLabel.TextColor3 = Color3.fromRGB(235, 235, 240)
-
-local keyBox = splash:AddTextBox("Enter Orbyte key")
-
-local API_ERROR_MESSAGES = {
-	invalid_key = "The key you entered isn't valid. Double-check it and try again.",
-	revoked = "This key has been revoked. Contact the seller for a new one.",
-	expired = "This key has expired. Contact the seller for a replacement.",
-	hwid_bound = "This device is already linked to a different Orbyte key. Ask the seller to unbind your device, then try again.",
-	device_limit = "This key is already in use on too many devices. Contact the seller to reset it.",
-	missing_key_or_hwid = "A required value was missing. Restart Orbyte and try again.",
-	bad_request = "The request was malformed. Restart Orbyte and try again.",
-}
-
-local function friendlyError(err)
-	local msg = API_ERROR_MESSAGES[tostring(err)]
-	if msg then return msg end
-	return "Something went wrong. Try again in a bit. (" .. tostring(err) .. ")"
-end
-
-local function showApiError(msg)
-	apiLabel.Text = friendlyError(msg)
-	apiLabel.TextColor3 = Color3.fromRGB(255, 150, 150)
-end
-
-splash:AddButton("Verify", function()
-	local key = (keyBox.Text or ""):gsub("%s+", ""):upper()
-	if #key < 8 then
-		showApiError("Enter a valid key.")
+local function showKeyGate()
+	-- A cached, still-valid token skips the key screen entirely.
+	if tryBoot() then
+		showNotif("Orbyte", "Welcome back.", "Success")
+		launchOrbyte()
 		return
 	end
 
-	local resp = apiCall("/api/orbyte/verify", { key = key, hwid = hwid() })
-	if resp and resp.ok and type(resp.token) == "string" then
-		if folderOk and type(writefile) == "function" then
-			pcall(function() writefile(TOKEN_PATH, resp.token) end)
+	-- Key gate: folder status + key entry + verify.
+	local splash = ModernUI.new({ Title = "Orbyte", Size = SPLASH_SIZE })
+
+	local folderLabel = splash:AddLabel(folderMessage)
+	folderLabel.TextColor3 = folderOk
+		and Color3.fromRGB(130, 220, 150)
+		or Color3.fromRGB(255, 150, 150)
+
+	local apiLabel = splash:AddLabel("Enter your Orbyte key to continue.")
+	apiLabel.TextColor3 = Color3.fromRGB(235, 235, 240)
+
+	local keyBox = splash:AddTextBox("Enter Orbyte key")
+
+	local API_ERROR_MESSAGES = {
+		invalid_key = "The key you entered isn't valid. Double-check it and try again.",
+		revoked = "This key has been revoked. Contact the seller for a new one.",
+		expired = "This key has expired. Contact the seller for a replacement.",
+		hwid_bound = "This device is already linked to a different Orbyte key. Ask the seller to unbind your device, then try again.",
+		device_limit = "This key is already in use on too many devices. Contact the seller to reset it.",
+		missing_key_or_hwid = "A required value was missing. Restart Orbyte and try again.",
+		bad_request = "The request was malformed. Restart Orbyte and try again.",
+	}
+
+	local function friendlyError(err)
+		local msg = API_ERROR_MESSAGES[tostring(err)]
+		if msg then return msg end
+		return "Something went wrong. Try again in a bit. (" .. tostring(err) .. ")"
+	end
+
+	local function showApiError(msg)
+		apiLabel.Text = friendlyError(msg)
+		apiLabel.TextColor3 = Color3.fromRGB(255, 150, 150)
+	end
+
+	splash:AddButton("Verify", function()
+		local key = (keyBox.Text or ""):gsub("%s+", ""):upper()
+		if #key < 8 then
+			showApiError("Enter a valid key.")
+			return
 		end
-		splash:Destroy()
-		showNotif("Key verified", "Welcome back.", "Success")
-		openGameChooser(CONFIG)
-	else
-local err = resp and resp.error or "Verification failed."
+
+		local resp = apiCall("/api/orbyte/verify", { key = key, hwid = hwid() })
+		if resp and resp.ok and type(resp.token) == "string" then
+			if folderOk and type(writefile) == "function" then
+				pcall(function() writefile(TOKEN_PATH, resp.token) end)
+			end
+			splash:Destroy()
+			showNotif("Key verified", "Welcome back.", "Success")
+			launchOrbyte()
+		else
+			local err = resp and resp.error or "Verification failed."
 			local friendly = friendlyError(err)
 			showApiError(friendly)
 			showNotif("Key rejected", friendly, "Error")
+		end
+	end)
+end
+
+-- First screen: detect the current game, then route into the key gate. If the
+-- detected game is supported we offer "Continue to <Game>"; otherwise we say
+-- the game isn't supported. Universal is always offered as the default.
+local currentUniverse = 0
+pcall(function()
+	currentUniverse = tonumber(game.GameId) or 0
+end)
+local currentPlace = tonumber(game.PlaceId) or 0
+
+local matchedGame = nil
+for _, g in ipairs(games) do
+	local uni = tonumber(g.universeId or 0) or 0
+	local pid = tonumber(g.id or 0) or 0
+	if (uni > 0 and uni == currentUniverse) or (pid > 0 and pid == currentPlace) then
+		matchedGame = g
+		break
 	end
+end
+
+local detector = ModernUI.new({ Title = "Orbyte — Game", Size = CHOOSER_SIZE })
+
+if matchedGame then
+	local name = tostring(matchedGame.name or "Game")
+	launchTitle = "Orbyte — " .. name
+	launchFeatures = type(matchedGame.features) == "table" and matchedGame.features or nil
+	detector:AddLabel("Detected: " .. name)
+	detector:AddButton("Continue to " .. name, function()
+		detector:Destroy()
+		showKeyGate()
+	end)
+else
+	detector:AddLabel("Game Not Supported")
+end
+
+detector:AddLabel("Or launch Orbyte universally:")
+detector:AddButton(univLabel, function()
+	launchTitle = "Orbyte"
+	launchFeatures = universalFeatures
+	detector:Destroy()
+	showKeyGate()
 end)
 
 end
