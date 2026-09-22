@@ -148,12 +148,12 @@ return function(Loader, ModernUI, NotificationSystem)
 			local TELEPORT_BACK_AFTER = 0.5 -- seconds at the egg spot before returning
 
 			local function teleportToEggAndBack()
-				task.wait(TELEPORT_START_DELAY)
+				wait(TELEPORT_START_DELAY)
 				local rootPart = getRootPart()
 				if not rootPart then return end
 				local saved = rootPart.Position
 				rootPart.CFrame = CFrame.new(TELEPORT_TO)
-				task.wait(TELEPORT_BACK_AFTER)
+				wait(TELEPORT_BACK_AFTER)
 				if rootPart.Parent then
 					rootPart.CFrame = CFrame.new(saved)
 				end
@@ -165,7 +165,7 @@ return function(Loader, ModernUI, NotificationSystem)
 					local objectText, actionText = describePromptGui(promptGui)
 					if actionText == "Steal" then
 						notify:Success(objectText, "Steal triggered", 3)
-						task.spawn(teleportToEggAndBack)
+						spawn(teleportToEggAndBack)
 					end
 				end
 			end
