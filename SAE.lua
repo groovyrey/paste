@@ -129,7 +129,11 @@ return function(Loader, ModernUI, NotificationSystem)
 			local function watchDropHeldEgg(inst)
 				if type(inst.Enabled) == "boolean" and not inst.Enabled then
 					table.insert(connections, inst:GetPropertyChangedSignal("Enabled"):Connect(function()
-						if inst.Enabled then fire() end
+						if inst.Enabled then
+							fire()
+						else
+							triggered = false -- flipped off: arm for the next steal
+						end
 					end))
 				else
 					fire() -- just appeared (or is enabled already)
