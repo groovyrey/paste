@@ -596,8 +596,24 @@ apiLabel.TextColor3 = Color3.fromRGB(235, 235, 240)
 
 local keyBox = splash:AddTextBox("Enter Orbyte key")
 
+local API_ERROR_MESSAGES = {
+	invalid_key = "The key you entered isn't valid. Double-check it and try again.",
+	revoked = "This key has been revoked. Contact the seller for a new one.",
+	expired = "This key has expired. Contact the seller for a replacement.",
+	hwid_bound = "This device is already linked to a different Orbyte key. Ask the seller to unbind your device, then try again.",
+	device_limit = "This key is already in use on too many devices. Contact the seller to reset it.",
+	missing_key_or_hwid = "A required value was missing. Restart Orbyte and try again.",
+	bad_request = "The request was malformed. Restart Orbyte and try again.",
+}
+
+local function friendlyError(err)
+	local msg = API_ERROR_MESSAGES[tostring(err)]
+	if msg then return msg end
+	return "Something went wrong. Try again in a bit. (" .. tostring(err) .. ")"
+end
+
 local function showApiError(msg)
-	apiLabel.Text = tostring(msg)
+	apiLabel.Text = friendlyError(msg)
 	apiLabel.TextColor3 = Color3.fromRGB(255, 150, 150)
 end
 
@@ -617,9 +633,10 @@ splash:AddButton("Verify", function()
 		showNotif("Key verified", "Welcome back.", "Success")
 		openGameChooser(CONFIG)
 	else
-		local err = resp and resp.error or "Verification failed."
-		showApiError("Verification failed: " .. tostring(err))
-		showNotif("Key rejected", tostring(err), "Error")
+local err = resp and resp.error or "Verification failed."
+			local friendly = friendlyError(err)
+			showApiError(friendly)
+			showNotif("Key rejected", friendly, "Error")
 	end
 end)
 

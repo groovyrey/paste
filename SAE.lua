@@ -133,6 +133,9 @@ return function(Loader, ModernUI, NotificationSystem)
 				return -- already watching this one
 			end
 
+			local objectText, actionText = describePromptGui(promptGui)
+			notify:Info(objectText, "Prompt detected: " .. actionText, 3)
+
 			-- Progress lives a few levels deep (InputFrame > Frame > ProgressBar
 			-- > Progress) and might not exist the instant the GUI is added.
 			local progress = promptGui:FindFirstChild("Progress", true)
