@@ -147,7 +147,9 @@ return function(Loader, ModernUI, NotificationSystem)
 				if progress.Value >= 1 and not triggered[promptGui] then
 					triggered[promptGui] = true
 					local objectText, actionText = describePromptGui(promptGui)
-					notify:Success(objectText, actionText .. " triggered", 3)
+					if actionText == "Steal" then
+						notify:Success(objectText, "Steal triggered", 3)
+					end
 				end
 			end
 
