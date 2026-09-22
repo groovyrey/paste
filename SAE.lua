@@ -106,6 +106,7 @@ return function(Loader, ModernUI, NotificationSystem)
 	Loader.Register("SAE:PromptWatcher", function()
 		local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 		local notify = NotificationSystem.new()
+		notify:Info("SAE", "Prompt watcher started", 2)
 
 		local connections = {} -- every RBXScriptConnection made here, disconnected on stop
 		local progressConnections = {} -- [promptGui] = its Progress-value connection
