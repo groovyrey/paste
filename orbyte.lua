@@ -336,6 +336,7 @@ if NotifModule then
 	local okNew, inst = pcall(NotifModule.new, NotifModule, { Theme = ModernUI.Theme })
 	if okNew and inst then
 		notify = inst
+		_G.OrbyteNotif = inst
 	end
 end
 
