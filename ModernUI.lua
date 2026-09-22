@@ -1,54 +1,77 @@
 --[[
 	ModernUI.lua
+
 	Reusable modern dark-themed UI module. No standalone behaviour — build a
 	window with ModernUI.new(...) and call the returned UI methods.
 
 	Usage (executor):
-		local ModernUI = loadstring(readfile("ModernUI.lua"))()   -- or require a ModuleScript
+		local ModernUI = loadstring(readfile("ModernUI.lua"))() -- or require a ModuleScript
 		local ui = ModernUI.new({ Title = "Orbyte", Size = Vector2.new(340, 420) })
+
 		ui:AddLabel("hello")
 		ui:AddButton("go", function() end)
 		ui:AddToggle("on?", false, function(state) end)
 		ui:AddSlider("Vol", 0, 100, 50, function(v) end)
 		ui:AddTextBox("...", function(text, enter) end)
 
+		-- Tabs: each page behaves exactly like `ui` itself (same Add* methods),
+		-- it just writes into its own tab's content instead of the window's.
+		local tabs = ui:AddTabs({ "Main", "Settings" }) -- 2nd arg: default index, default 1
+		tabs:GetPage("Main"):AddButton("Click me", function() end)
+		tabs:GetPage("Settings"):AddToggle("Beta features", false, function() end)
+		tabs:OnChanged(function(name, page) end) -- fires whenever the active tab changes
+		tabs:SetActive("Settings")
+
+		-- Pagination: a Prev/Next-controlled list. Each item also behaves like
+		-- `ui` (same Add* methods), scoped to that one row/card.
+		local list = ui:AddPagination({ PerPage = 5 })
+		for i = 1, 23 do
+			list:AddItem(function(item)
+				item:AddLabel("Row " .. i)
+			end)
+		end
+		list:OnChanged(function(pageNumber, pageCount) end)
+		list:GoToPage(1) / list:NextPage() / list:PrevPage()
+		list:Clear() -- wipes all items back to an empty page 1
+
 	Options for new():
-		Title  (string)            default "Modern UI"
-		Size   (Vector2)           default 340x420 (preferred size; it is
+		Title      (string)        default "Modern UI"
+		Size       (Vector2)       default 340x420 (preferred size; it is
 		                           clamped so the window always fits the screen —
 		                           content scrolls when it is taller than that)
-		Margin (number)            default 16, free space kept around the window
-		Theme  (table | nil)       override any DEFAULT_THEME field
-		Gui    (ScreenGui | nil)   parent a window into an existing GUI
-		Parent (instance | nil)    default LocalPlayer.PlayerGui
-		Name   (string)            ScreenGui name, default "ModernUI"
+		Margin     (number)        default 16, free space kept around the window
+		Theme      (table | nil)   override any DEFAULT_THEME field
+		Gui        (ScreenGui | nil) parent a window into an existing GUI
+		Parent     (instance | nil) default LocalPlayer.PlayerGui
+		Name       (string)        ScreenGui name, default "ModernUI"
 --]]
 
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Players = game:GetService("Players")
+local TextService = game:GetService("TextService")
 
 local ModernUI = {}
 ModernUI.__index = ModernUI
 
 --// THEME ---------------------------------------------------------------
+
 local DEFAULT_THEME = {
-	Background   = Color3.fromRGB(24, 24, 28),
-	Surface      = Color3.fromRGB(32, 32, 38),
+	Background = Color3.fromRGB(24, 24, 28),
+	Surface = Color3.fromRGB(32, 32, 38),
 	SurfaceLight = Color3.fromRGB(42, 42, 50),
-	Accent       = Color3.fromRGB(99, 102, 241),   -- indigo
-	AccentHover  = Color3.fromRGB(129, 132, 255),
-	Text         = Color3.fromRGB(235, 235, 240),
-	SubText      = Color3.fromRGB(160, 160, 170),
-	Border       = Color3.fromRGB(50, 50, 58),
-	Font         = Enum.Font.GothamMedium,
-	FontBold     = Enum.Font.GothamBold,
+	Accent = Color3.fromRGB(99, 102, 241), -- indigo
+	AccentHover = Color3.fromRGB(129, 132, 255),
+	Text = Color3.fromRGB(235, 235, 240),
+	SubText = Color3.fromRGB(160, 160, 170),
+	Border = Color3.fromRGB(50, 50, 58),
+	Font = Enum.Font.GothamMedium,
+	FontBold = Enum.Font.GothamBold,
 }
 ModernUI.Theme = DEFAULT_THEME
 
 local TWEEN_FAST = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local TWEEN_MED  = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-
+local TWEEN_MED = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local MIN_WINDOW = 120 -- smallest width/height the window may shrink to
 
 local function mergeTheme(base, overrides)
@@ -59,6 +82,7 @@ local function mergeTheme(base, overrides)
 end
 
 --// HELPERS --------------------------------------------------------------
+
 local function create(className, props, children)
 	local inst = Instance.new(className)
 	for prop, value in pairs(props or {}) do
@@ -154,6 +178,16 @@ local function makeDraggable(handle, target, onClick)
 	end)
 end
 
+-- Metatables for the lightweight "page-like" objects Tabs and Pagination hand
+-- back. They deliberately share ModernUI's __index so every ModernUI:AddX
+-- component function works on them unmodified, as long as they expose the
+-- same fields those functions read (Theme, TweenFast, TweenMed, Content, order).
+local TabsMeta = {}
+TabsMeta.__index = TabsMeta
+
+local PaginationMeta = {}
+PaginationMeta.__index = PaginationMeta
+
 --// CONSTRUCTOR ----------------------------------------------------------
 
 function ModernUI.new(options)
@@ -190,12 +224,12 @@ function ModernUI.new(options)
 	-- the window just scrolls.
 	self.DesiredSize = options.Size or Vector2.new(340, 420)
 	self.Margin = options.Margin or 16
-
 	local size = self:_fitSize()
 	local expanded = UDim2.fromOffset(size.X, size.Y)
 	local collapsed = options.CollapsedSize or UDim2.fromOffset(56, 56)
 
 	--// BUILD THE WINDOW --------------------------------------------------
+
 	local windowCorner = corner(14)
 	local Window = create("Frame", {
 		Name = "Window",
@@ -337,15 +371,12 @@ end
 function ModernUI:_clampToScreen()
 	local window = self.Window
 	if not window or not window.Parent then return end
-
 	local view = getViewport(self.Gui)
 	local rel = window.AbsolutePosition - self.Gui.AbsolutePosition
 	local size = window.AbsoluteSize
-
 	local targetX = math.clamp(rel.X, 0, math.max(0, view.X - size.X))
 	local targetY = math.clamp(rel.Y, 0, math.max(0, view.Y - size.Y))
 	local dx, dy = targetX - rel.X, targetY - rel.Y
-
 	if math.abs(dx) > 0.5 or math.abs(dy) > 0.5 then
 		tween(window, self.TweenFast, {
 			Position = window.Position + UDim2.fromOffset(dx, dy),
@@ -358,7 +389,6 @@ end
 function ModernUI:Refit()
 	local fit = self:_fitSize()
 	self.ExpandedSize = UDim2.fromOffset(fit.X, fit.Y)
-
 	if not self.isCollapsed then
 		tween(self.Window, self.TweenFast, { Size = self.ExpandedSize })
 		task.delay(self.TweenFast.Time, function()
@@ -398,6 +428,7 @@ function ModernUI:SetCollapsed(state)
 			Position = UDim2.fromOffset(0, 0),
 		})
 		self.CollapseButton.Text = ""
+
 		local cc = self.CollapseButton:FindFirstChildOfClass("UICorner")
 		if cc then
 			tween(cc, self.TweenMed, { CornerRadius = UDim.new(0, 28) })
@@ -411,6 +442,7 @@ function ModernUI:SetCollapsed(state)
 			Size = UDim2.fromOffset(28, 28),
 			Position = UDim2.new(1, -38, 0.5, -14),
 		})
+
 		local cc = self.CollapseButton:FindFirstChildOfClass("UICorner")
 		if cc then
 			tween(cc, self.TweenMed, { CornerRadius = UDim.new(0, 14) })
@@ -647,6 +679,374 @@ function ModernUI:AddTextBox(placeholder, callback)
 	end)
 
 	return box
+end
+
+--// TABS -------------------------------------------------------------
+--
+-- ui:AddTabs({"Main","Settings"}, 1) returns a Tabs controller. Each tab's
+-- "page" is a table sharing ModernUI's metatable, so tabs:GetPage("Main")
+-- gets every ModernUI:AddX method for free, scoped to that tab's own content
+-- frame. Only the active page's frame is Visible at a time; UIListLayout
+-- automatically skips invisible siblings, so the window still resizes to fit
+-- whichever tab is showing.
+
+function ModernUI:AddTabs(names, defaultIndex)
+	local theme = self.Theme
+	names = names or {}
+	defaultIndex = defaultIndex or 1
+
+	local bar = create("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 30),
+		LayoutOrder = nextOrder(self),
+		Parent = self.Content,
+	}, {
+		create("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			SortOrder = Enum.SortOrder.LayoutOrder,
+			Padding = UDim.new(0, 6),
+		}),
+	})
+
+	local pagesContainer = create("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		LayoutOrder = nextOrder(self),
+		Parent = self.Content,
+	})
+
+	local tabs = setmetatable({
+		Theme = theme,
+		TweenFast = self.TweenFast,
+		TweenMed = self.TweenMed,
+		Bar = bar,
+		PagesContainer = pagesContainer,
+		Buttons = {}, -- [name] = TextButton
+		Pages = {}, -- [name] = page object
+		Order = {}, -- names in the order they were added
+		ActiveName = nil,
+		ActivePage = nil,
+		ChangedCallback = nil,
+	}, TabsMeta)
+
+	for _, name in ipairs(names) do
+		tabs:AddPage(name)
+	end
+	if names[defaultIndex] then
+		tabs:SetActive(names[defaultIndex])
+	end
+
+	return tabs
+end
+
+-- Adds one tab, returns its page object (same Add* methods as ModernUI).
+function TabsMeta:AddPage(name)
+	local theme = self.Theme
+
+	local textSize = TextService:GetTextSize(name, 13, theme.FontBold, Vector2.new(1000, 30))
+	local btn = create("TextButton", {
+		Text = name,
+		Font = theme.FontBold,
+		TextSize = 13,
+		TextColor3 = theme.SubText,
+		BackgroundColor3 = theme.Surface,
+		AutoButtonColor = false,
+		Size = UDim2.fromOffset(textSize.X + 24, 30),
+		LayoutOrder = #self.Order + 1,
+		Parent = self.Bar,
+	}, { corner(8) })
+
+	local pageContent = create("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		Visible = false,
+		LayoutOrder = #self.Order + 1,
+		Parent = self.PagesContainer,
+	}, {
+		create("UIListLayout", {
+			SortOrder = Enum.SortOrder.LayoutOrder,
+			Padding = UDim.new(0, 10),
+		}),
+	})
+
+	local page = setmetatable({
+		Theme = theme,
+		TweenFast = self.TweenFast,
+		TweenMed = self.TweenMed,
+		Content = pageContent,
+		order = 0,
+	}, ModernUI)
+
+	self.Buttons[name] = btn
+	self.Pages[name] = page
+	table.insert(self.Order, name)
+
+	btn.MouseButton1Click:Connect(function()
+		self:SetActive(name)
+	end)
+	btn.MouseEnter:Connect(function()
+		if self.ActiveName ~= name then
+			tween(btn, self.TweenFast, { BackgroundColor3 = theme.SurfaceLight })
+		end
+	end)
+	btn.MouseLeave:Connect(function()
+		if self.ActiveName ~= name then
+			tween(btn, self.TweenFast, { BackgroundColor3 = theme.Surface })
+		end
+	end)
+
+	return page
+end
+
+-- Switches which tab is showing. No-op if `name` is already active or unknown.
+function TabsMeta:SetActive(name)
+	local page = self.Pages[name]
+	if not page or self.ActiveName == name then return end
+
+	if self.ActiveName then
+		local prevPage = self.Pages[self.ActiveName]
+		if prevPage then prevPage.Content.Visible = false end
+		local prevBtn = self.Buttons[self.ActiveName]
+		if prevBtn then
+			tween(prevBtn, self.TweenFast, {
+				BackgroundColor3 = self.Theme.Surface,
+				TextColor3 = self.Theme.SubText,
+			})
+		end
+	end
+
+	page.Content.Visible = true
+	self.ActiveName = name
+	self.ActivePage = page
+
+	local btn = self.Buttons[name]
+	if btn then
+		tween(btn, self.TweenFast, {
+			BackgroundColor3 = self.Theme.Accent,
+			TextColor3 = Color3.new(1, 1, 1),
+		})
+	end
+
+	if self.ChangedCallback then
+		self.ChangedCallback(name, page)
+	end
+end
+
+function TabsMeta:GetPage(name)
+	return self.Pages[name]
+end
+
+function TabsMeta:GetActive()
+	return self.ActiveName, self.ActivePage
+end
+
+-- callback(name, page) fires every time SetActive changes the active tab.
+function TabsMeta:OnChanged(callback)
+	self.ChangedCallback = callback
+end
+
+--// PAGINATION ---------------------------------------------------------
+--
+-- ui:AddPagination({ PerPage = 5 }) returns a Pagination controller with a
+-- Prev/Next control row. list:AddItem(builderFn) adds one row/card; builderFn
+-- receives a page-like object (same Add* methods as ModernUI) scoped to that
+-- item. Only the current page's items are Visible; everything else follows
+-- the same show/hide approach as Tabs above.
+
+function ModernUI:AddPagination(options)
+	options = options or {}
+	local theme = self.Theme
+	local perPage = math.max(1, options.PerPage or 5)
+
+	local itemsContainer = create("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		LayoutOrder = nextOrder(self),
+		Parent = self.Content,
+	}, {
+		create("UIListLayout", {
+			SortOrder = Enum.SortOrder.LayoutOrder,
+			Padding = UDim.new(0, 8),
+		}),
+	})
+
+	local controls = create("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 34),
+		LayoutOrder = nextOrder(self),
+		Parent = self.Content,
+	})
+
+	local prevBtn = create("TextButton", {
+		Text = "‹",
+		Font = theme.FontBold,
+		TextSize = 16,
+		TextColor3 = theme.Text,
+		BackgroundColor3 = theme.SurfaceLight,
+		AutoButtonColor = false,
+		Size = UDim2.fromOffset(34, 34),
+		Position = UDim2.fromOffset(0, 0),
+		Parent = controls,
+	}, { corner(10) })
+
+	local pageLabel = create("TextLabel", {
+		Text = "1 / 1",
+		Font = theme.Font,
+		TextSize = 13,
+		TextColor3 = theme.SubText,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, -76, 1, 0),
+		Position = UDim2.fromOffset(38, 0),
+		Parent = controls,
+	})
+
+	local nextBtn = create("TextButton", {
+		Text = "›",
+		Font = theme.FontBold,
+		TextSize = 16,
+		TextColor3 = theme.Text,
+		BackgroundColor3 = theme.SurfaceLight,
+		AutoButtonColor = false,
+		Size = UDim2.fromOffset(34, 34),
+		Position = UDim2.new(1, -34, 0, 0),
+		Parent = controls,
+	}, { corner(10) })
+
+	local pag = setmetatable({
+		Theme = theme,
+		TweenFast = self.TweenFast,
+		TweenMed = self.TweenMed,
+		ItemsContainer = itemsContainer,
+		Controls = controls,
+		PrevButton = prevBtn,
+		NextButton = nextBtn,
+		PageLabel = pageLabel,
+		PerPage = perPage,
+		Items = {}, -- { Frame = Frame, Page = page }[]
+		CurrentPage = 1,
+		ChangedCallback = nil,
+	}, PaginationMeta)
+
+	prevBtn.MouseButton1Click:Connect(function() pag:PrevPage() end)
+	nextBtn.MouseButton1Click:Connect(function() pag:NextPage() end)
+	prevBtn.MouseEnter:Connect(function() tween(prevBtn, self.TweenFast, { BackgroundColor3 = theme.Accent }) end)
+	prevBtn.MouseLeave:Connect(function() tween(prevBtn, self.TweenFast, { BackgroundColor3 = theme.SurfaceLight }) end)
+	nextBtn.MouseEnter:Connect(function() tween(nextBtn, self.TweenFast, { BackgroundColor3 = theme.Accent }) end)
+	nextBtn.MouseLeave:Connect(function() tween(nextBtn, self.TweenFast, { BackgroundColor3 = theme.SurfaceLight }) end)
+
+	pag:_refresh()
+	return pag
+end
+
+function PaginationMeta:_pageCount()
+	return math.max(1, math.ceil(#self.Items / self.PerPage))
+end
+
+-- Shows/hides items for the current page and updates the "n / n" label and
+-- Prev/Next enabled state. Called automatically by AddItem/Clear/NextPage/etc.
+function PaginationMeta:_refresh()
+	local pageCount = self:_pageCount()
+	self.CurrentPage = math.clamp(self.CurrentPage, 1, pageCount)
+
+	local startIdx = (self.CurrentPage - 1) * self.PerPage + 1
+	local endIdx = math.min(startIdx + self.PerPage - 1, #self.Items)
+
+	for i, item in ipairs(self.Items) do
+		item.Frame.Visible = (i >= startIdx and i <= endIdx)
+	end
+
+	self.PageLabel.Text = string.format("%d / %d", self.CurrentPage, pageCount)
+
+	local canPrev = self.CurrentPage > 1
+	local canNext = self.CurrentPage < pageCount
+	self.PrevButton.Active = canPrev
+	self.NextButton.Active = canNext
+	self.PrevButton.TextTransparency = canPrev and 0 or 0.6
+	self.NextButton.TextTransparency = canNext and 0 or 0.6
+
+	if self.ChangedCallback then
+		self.ChangedCallback(self.CurrentPage, pageCount)
+	end
+end
+
+function PaginationMeta:NextPage()
+	if self.CurrentPage < self:_pageCount() then
+		self.CurrentPage += 1
+		self:_refresh()
+	end
+end
+
+function PaginationMeta:PrevPage()
+	if self.CurrentPage > 1 then
+		self.CurrentPage -= 1
+		self:_refresh()
+	end
+end
+
+function PaginationMeta:GoToPage(n)
+	self.CurrentPage = math.clamp(n, 1, self:_pageCount())
+	self:_refresh()
+end
+
+-- Adds one paginated item. builderFn(item) is called immediately with a
+-- page-like object (same Add* methods as ModernUI) scoped to this item's own
+-- frame; returns that same object.
+function PaginationMeta:AddItem(builderFn)
+	local itemFrame = create("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		Visible = false,
+		LayoutOrder = #self.Items + 1,
+		Parent = self.ItemsContainer,
+	}, {
+		create("UIListLayout", {
+			SortOrder = Enum.SortOrder.LayoutOrder,
+			Padding = UDim.new(0, 6),
+		}),
+	})
+
+	local itemPage = setmetatable({
+		Theme = self.Theme,
+		TweenFast = self.TweenFast,
+		TweenMed = self.TweenMed,
+		Content = itemFrame,
+		order = 0,
+	}, ModernUI)
+
+	table.insert(self.Items, { Frame = itemFrame, Page = itemPage })
+
+	if builderFn then
+		builderFn(itemPage)
+	end
+
+	self:_refresh()
+	return itemPage
+end
+
+-- Destroys every item's frame and resets back to an empty page 1.
+function PaginationMeta:Clear()
+	for _, item in ipairs(self.Items) do
+		item.Frame:Destroy()
+	end
+	self.Items = {}
+	self.CurrentPage = 1
+	self:_refresh()
+end
+
+function PaginationMeta:SetPerPage(n)
+	self.PerPage = math.max(1, n)
+	self:_refresh()
+end
+
+-- callback(pageNumber, pageCount) fires whenever the current page changes
+-- (NextPage/PrevPage/GoToPage) or the item count changes (AddItem/Clear).
+function PaginationMeta:OnChanged(callback)
+	self.ChangedCallback = callback
 end
 
 return ModernUI
