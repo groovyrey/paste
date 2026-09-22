@@ -520,7 +520,26 @@ local function ensureRegistered()
 	return true
 end
 
-local function openModernUI(uiTitle, features)
+local function resolveTabs(preset)
+	local t = preset and preset.tabs
+	if type(t) == "table" then
+		local map = {}
+		for k, v in pairs(t) do
+			if type(v) == "table" and #v > 0 then
+				map[tostring(k)] = v
+			end
+		end
+		if next(map) then return map end
+	end
+	-- Backward compat: a flat "features" list becomes a single group.
+	local flat = preset and preset.features
+	if type(flat) == "table" and #flat > 0 then
+		return { Features = flat }
+	end
+	return nil
+end
+
+local function openModernUI(uiTitle, tabs)
 	local ui = ModernUI.new({ Title = uiTitle or "Orbyte", Size = MAIN_SIZE })
 
 	ui:AddButton("Collapse / Expand", function()
@@ -539,7 +558,7 @@ local function openModernUI(uiTitle, features)
 
 	local unpackArgs = table.unpack or unpack
 
-	local function buildToggles(features)
+	local function buildToggles(page, features)
 		for _, name in ipairs(features) do
 			local def = FEATURE_DEFS[name] or {}
 			local label = def.label or tostring(name)
@@ -547,19 +566,19 @@ local function openModernUI(uiTitle, features)
 
 			if def.kind == "action" and type(def.action) == "function" then
 				-- Plain button (no textbox): opens/toggles a custom panel.
-				ui:AddButton(label, function()
+				page:AddButton(label, function()
 					def.action(Loader)
 				end)
 			elseif def.kind == "button" and type(def.action) == "function" then
-				local result = ui:AddTextBox(def.hint or "—")
-				ui:AddButton(label, function()
+				local result = page:AddTextBox(def.hint or "—")
+				page:AddButton(label, function()
 					local value = def.action()
 					if value then
 						result.Text = tostring(value)
 					end
 				end)
 			else
-				ui:AddToggle(label, false, function(state)
+				page:AddToggle(label, false, function(state)
 					if state then
 						Loader.Enable(name, unpackArgs(args))
 					else
@@ -570,9 +589,25 @@ local function openModernUI(uiTitle, features)
 		end
 	end
 
-	ui:AddLabel(uiTitle or "Orbyte v1.0")
-	ui:AddLabel("Features")
-	buildToggles(features or DEFAULT_FEATURES)
+	local names = {}
+	local groups = {}
+	for name, feats in pairs(tabs or {}) do
+		if type(feats) == "table" and #feats > 0 then
+			table.insert(names, name)
+			groups[name] = feats
+		end
+	end
+	table.sort(names)
+
+	if #names == 0 then
+		ui:AddLabel("No feature groups configured.")
+		return
+	end
+
+	local tabbed = ui:AddTabs(names, 1)
+	for _, name in ipairs(names) do
+		buildToggles(tabbed:GetPage(name), groups[name])
+	end
 end
 
 -- Game chooser shown after a valid key. Presets and the Universal label come
@@ -582,21 +617,21 @@ local CONFIG = loadConfig()
 
 local games = CONFIG and type(CONFIG.games) == "table" and CONFIG.games or {}
 local universal = CONFIG and type(CONFIG.universal) == "table" and CONFIG.universal or {}
-local universalFeatures = type(universal.features) == "table" and universal.features or nil
+local universalTabs = resolveTabs(universal)
 local univLabel = tostring(universal.label or "Universal — Launch Orbyte")
 
 -- The window actually opened after the key gate passes.
 local launchTitle = "Orbyte"
-local launchFeatures = universalFeatures
+local launchTabs = universalTabs
 
 local function launchOrbyte()
-	local features = launchFeatures
-	if type(features) ~= "table" or #features == 0 then
-		features = universalFeatures
+	local tabs = launchTabs
+	if type(tabs) ~= "table" or next(tabs) == nil then
+		tabs = universalTabs
 	end
-	if type(features) == "table" and #features > 0 then
+	if type(tabs) == "table" and next(tabs) ~= nil then
 		showNotif("Orbyte", "Preset loaded.", "Success")
-		openModernUI(launchTitle, features)
+		openModernUI(launchTitle, tabs)
 	else
 		showNotif("Orbyte", "No presets configured yet.", "Warning")
 	end
@@ -692,7 +727,7 @@ local detector = ModernUI.new({ Title = "Orbyte — Game", Size = CHOOSER_SIZE }
 if matchedGame then
 	local name = tostring(matchedGame.name or "Game")
 	launchTitle = "Orbyte — " .. name
-	launchFeatures = type(matchedGame.features) == "table" and matchedGame.features or nil
+	launchTabs = resolveTabs(matchedGame)
 	detector:AddLabel("Detected: " .. name)
 	detector:AddButton("Continue to " .. name, function()
 		detector:Destroy()
@@ -705,7 +740,7 @@ end
 detector:AddLabel("Or launch Orbyte universally:")
 detector:AddButton(univLabel, function()
 	launchTitle = "Orbyte"
-	launchFeatures = universalFeatures
+	launchTabs = universalTabs
 	detector:Destroy()
 	showKeyGate()
 end)

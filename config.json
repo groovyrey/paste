@@ -1,9 +1,15 @@
 {
 	"universal": {
 		"label": "Universal — Launch Orbyte",
-		"features": ["InfiniteJump", "WalkSpeed", "Noclip", "ESP", "SaeCopyPos"]
+		"tabs": {
+			"Main": ["InfiniteJump", "WalkSpeed", "Noclip", "ESP"],
+			"Extra": ["SaeCopyPos"]
+		}
 	},
 	"games": [
-		{ "id": 107778070777162, "universeId": 10563114921, "name": "Steal An Egg", "features": ["SAE", "SaeCopyPos", "InstantTP", "WalkSpeed", "Noclip"] }
+		{ "id": 107778070777162, "universeId": 10563114921, "name": "Steal An Egg", "tabs": {
+			"SAE": ["SAE", "SaeCopyPos", "InstantTP"],
+			"General": ["WalkSpeed", "Noclip"]
+		} }
 	]
 }
