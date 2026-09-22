@@ -133,10 +133,7 @@ return function(Loader, ModernUI, NotificationSystem)
 				return -- already watching this one
 			end
 
-			local objectText, actionText = describePromptGui(promptGui)
-			notify:Info(objectText, "Prompt detected: " .. actionText, 3)
-
-			-- Progress lives a few levels deep (InputFrame > Frame > ProgressBar
+-- Progress lives a few levels deep (InputFrame > Frame > ProgressBar
 			-- > Progress) and might not exist the instant the GUI is added.
 			local progress = promptGui:FindFirstChild("Progress", true)
 			if not progress then
@@ -146,12 +143,27 @@ return function(Loader, ModernUI, NotificationSystem)
 				return
 			end
 
-			local function checkProgress()
+			local TELEPORT_TO = Vector3.new(542.18, 70.67, -349.22)
+local TELEPORT_BACK_AFTER = 0.5 -- seconds at the egg spot before returning
+
+local function teleportToEggAndBack()
+	local rootPart = getRootPart()
+	if not rootPart then return end
+	local saved = rootPart.Position
+	rootPart.CFrame = CFrame.new(TELEPORT_TO)
+	task.wait(TELEPORT_BACK_AFTER)
+	if rootPart.Parent then
+		rootPart.CFrame = CFrame.new(saved)
+	end
+end
+
+local function checkProgress()
 				if progress.Value >= 1 and not triggered[promptGui] then
 					triggered[promptGui] = true
 					local objectText, actionText = describePromptGui(promptGui)
 					if actionText == "Steal" then
 						notify:Success(objectText, "Steal triggered", 3)
+						task.spawn(teleportToEggAndBack)
 					end
 				end
 			end
