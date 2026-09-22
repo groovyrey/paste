@@ -240,7 +240,11 @@ local function loadSAEFeatures()
 	if not okFn or type(fn) ~= "function" then
 		return nil
 	end
-	return pcall(fn)
+	local okMod, mod = pcall(fn)
+	if okMod and type(mod) == "function" then
+		return mod
+	end
+	return nil
 end
 
 --// KEY API CLIENT ---------------------------------------------------------
