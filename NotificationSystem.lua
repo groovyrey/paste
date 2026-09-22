@@ -296,7 +296,7 @@ function NotificationSystem:Push(options)
 		ClipsDescendants = true,
 		Parent = self.Stack,
 	})
-	local frameCorner = corner(12)
+	local frameCorner = corner(0)
 	local frameStroke = stroke(theme.Border, 1)
 	frameCorner.Parent = frame
 	frameStroke.Parent = frame

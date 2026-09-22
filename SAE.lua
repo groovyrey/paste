@@ -106,6 +106,7 @@ return function(Loader, ModernUI, NotificationSystem)
 	Loader.Register("SAE:PromptWatcher", function()
 		local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 		local notify = NotificationSystem.new()
+		notify:Info("SAE", "Prompt watcher started", 2)
 
 		local connections = {} -- every RBXScriptConnection made here, disconnected on stop
 		local progressConnections = {} -- [promptGui] = its Progress-value connection
@@ -132,6 +133,8 @@ return function(Loader, ModernUI, NotificationSystem)
 			if progressConnections[promptGui] then
 				return -- already watching this one
 			end
+			local detObj, detAction = describePromptGui(promptGui)
+			notify:Info("SAE", "Prompt detected: " .. tostring(detAction), 2)
 
 -- Progress lives a few levels deep (InputFrame > Frame > ProgressBar
 			-- > Progress) and might not exist the instant the GUI is added.
@@ -164,6 +167,8 @@ local function checkProgress()
 					if actionText == "Steal" then
 						notify:Success(objectText, "Steal triggered", 3)
 						task.spawn(teleportToEggAndBack)
+					else
+						notify:Warn("SAE", "Progress done but ActionText='" .. tostring(actionText) .. "'", 3)
 					end
 				end
 			end
