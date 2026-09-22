@@ -13,16 +13,21 @@
 --]]
 
 local FOLDER = "Orbyte"
+
+-- Cache-buster: executors cache HttpGet by URL, so append the run time to every
+-- module URL to guarantee clients always pick up the newest pushed code.
+local CACHE_BUST = "?t=" .. tostring(os.time())
+
 local MODULE_PATH = FOLDER .. "/ModernUI.lua"
-local MODULE_URL = "https://raw.githubusercontent.com/groovyrey/paste/main/ModernUI.lua"
+local MODULE_URL = "https://raw.githubusercontent.com/groovyrey/paste/main/ModernUI.lua" .. CACHE_BUST
 local FLOADER_PATH = FOLDER .. "/FeatureLoader.lua"
-local FLOADER_URL = "https://raw.githubusercontent.com/groovyrey/paste/main/FeatureLoader.lua"
+local FLOADER_URL = "https://raw.githubusercontent.com/groovyrey/paste/main/FeatureLoader.lua" .. CACHE_BUST
 local CONFIG_PATH = FOLDER .. "/config.json"
-local CONFIG_URL = "https://raw.githubusercontent.com/groovyrey/paste/main/config.json"
+local CONFIG_URL = "https://raw.githubusercontent.com/groovyrey/paste/main/config.json" .. CACHE_BUST
 local NNOTIF_PATH = FOLDER .. "/NotificationSystem.lua"
-local NNOTIF_URL = "https://raw.githubusercontent.com/groovyrey/paste/main/NotificationSystem.lua"
+local NNOTIF_URL = "https://raw.githubusercontent.com/groovyrey/paste/main/NotificationSystem.lua" .. CACHE_BUST
 local SAE_PATH = FOLDER .. "/SAE.lua"
-local SAE_URL = "https://raw.githubusercontent.com/groovyrey/paste/main/SAE.lua"
+local SAE_URL = "https://raw.githubusercontent.com/groovyrey/paste/main/SAE.lua" .. CACHE_BUST
 
 local HttpService = game:GetService("HttpService")
 

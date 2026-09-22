@@ -1,1 +1,1 @@
-loadstring(game:HttpGet("https://raw.githubusercontent.com/groovyrey/paste/main/orbyte.lua", true))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/groovyrey/paste/main/orbyte.lua?t=" .. tostring(os.time()), true))()
