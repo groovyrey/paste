@@ -7,6 +7,7 @@ Usage:
     python3 gemini_chat.py --url http://localhost:8787/api/groovyrey/gemini
     python3 gemini_chat.py --install          accept the dependency install prompt
     python3 gemini_chat.py --no-install       never install, always fall back
+    python3 gemini_chat.py --ui spa            full screen app view
     python3 gemini_chat.py --data-dir ./data keep history next to this file
     python3 gemini_chat.py --portable         force a .gemini_chat folder here
 
@@ -15,6 +16,10 @@ Portable use: copy gemini_chat.py to a flash drive and run it with any Python
 .gemini_chat folder next to the script when the script sits on removable media
 and that folder is writable, otherwise they fall back to the home directory.
 Read-only media is detected, nothing is written and the chat still runs.
+
+Two views: the default chat view appends to the scrollback, and --ui spa takes
+over the whole screen and repaints a frame on every state change (alt screen,
+raw key input, spinner in the status line, replies revealed as they arrive).
 
 The only hard requirement is the Python standard library. prompt_toolkit is
 optional and upgrades the input line. When it is missing the script offers to
@@ -33,8 +38,10 @@ Env:
 
 import json
 import os
+import shutil
 import subprocess
 import sys
+import textwrap
 import time
 import urllib.error
 import urllib.request
@@ -565,6 +572,503 @@ def run_once(client, question, animate_output):
     return 0
 
 
+class KeyReader:
+    """Reads single keypresses with a timeout so the frame loop never blocks."""
+
+    SPECIAL = {
+        b"\r": "ENTER",
+        b"\n": "ENTER",
+        b"\x7f": "BACKSPACE",
+        b"\x08": "BACKSPACE",
+        b"\x03": "CTRLC",
+        b"\x04": "CTRLD",
+        b"\x15": "CTRLU",
+        b"\x17": "CTRLW",
+        b"\x0b": "CTRLK",
+        b"\x01": "CTRLA",
+        b"\x05": "CTRLE",
+        b"\t": "TAB",
+    }
+    SEQUENCES = {
+        b"\x1b[A": "UP",
+        b"\x1b[B": "DOWN",
+        b"\x1b[C": "RIGHT",
+        b"\x1b[D": "LEFT",
+        b"\x1bOA": "UP",
+        b"\x1bOB": "DOWN",
+        b"\x1bOC": "RIGHT",
+        b"\x1bOD": "LEFT",
+        b"\x1b[H": "HOME",
+        b"\x1b[F": "END",
+        b"\x1b[1~": "HOME",
+        b"\x1b[4~": "END",
+        b"\x1b[3~": "DEL",
+        b"\x1b[5~": "PGUP",
+        b"\x1b[6~": "PGDN",
+    }
+
+    def __init__(self):
+        self.pending = b""
+        self.saved = None
+        self.fd = None
+        self.termios = None
+        self.ok = False
+        self.windows = os.name == "nt"
+
+    def _apply(self, mode):
+        for when in (self.termios.TCSADRAIN, self.termios.TCSANOW):
+            try:
+                self.termios.tcsetattr(self.fd, when, mode)
+                return True
+            except self.termios.error:
+                continue
+        return False
+
+    def __enter__(self):
+        self.ok = True
+        if self.windows:
+            return self
+        try:
+            import termios
+        except ImportError:
+            self.ok = False
+            return self
+
+        self.termios = termios
+        self.fd = sys.stdin.fileno()
+        try:
+            self.saved = termios.tcgetattr(self.fd)
+            mode = termios.tcgetattr(self.fd)
+            mode[3] &= ~(termios.ICANON | termios.ECHO | termios.ISIG)
+            mode[6][termios.VMIN] = 0
+            mode[6][termios.VTIME] = 0
+            self.ok = self._apply(mode)
+        except (termios.error, ValueError, OSError):
+            self.ok = False
+        return self
+
+    def __exit__(self, *exc):
+        if self.saved is not None and self.fd is not None:
+            self._apply(self.saved)
+        return False
+
+    def _pull(self, timeout):
+        if self.windows:
+            import msvcrt
+
+            deadline = time.monotonic() + timeout
+            while True:
+                if msvcrt.kbhit():
+                    char = msvcrt.getwch()
+                    if char in ("\x00", "\xe0"):
+                        code = msvcrt.getwch()
+                        return {"H": b"\x1b[A", "P": b"\x1b[B", "K": b"\x1b[D", "M": b"\x1b[C"}.get(code, b"").encode()
+                    return char.encode("utf-8", "replace")
+                if time.monotonic() >= deadline:
+                    return b""
+                time.sleep(0.01)
+        import select
+
+        ready, _, _ = select.select([sys.stdin], [], [], timeout)
+        if not ready:
+            return b""
+        return os.read(self.fd, 4096)
+
+    def _next_key(self):
+        while self.pending:
+            if self.pending.startswith(b"\x1b"):
+                for sequence, name in self.SEQUENCES.items():
+                    if self.pending.startswith(sequence):
+                        self.pending = self.pending[len(sequence) :]
+                        return name
+                if self.pending == b"\x1b":
+                    return None
+                if len(self.pending) < 3 and self.pending[:2] in (b"\x1b[", b"\x1bO"):
+                    return None
+                self.pending = self.pending[1:]
+                continue
+            lead = self.pending[0]
+            if lead < 0x80:
+                size = 1
+            elif lead >= 0xF0:
+                size = 4
+            elif lead >= 0xE0:
+                size = 3
+            elif lead >= 0xC0:
+                size = 2
+            else:
+                self.pending = self.pending[1:]
+                continue
+            if len(self.pending) < size:
+                return None
+            chunk, self.pending = self.pending[:size], self.pending[size:]
+            name = self.SPECIAL.get(chunk)
+            if name:
+                return name
+            text = chunk.decode("utf-8", "replace")
+            if text.isprintable() or text == " ":
+                return text
+        return None
+
+    def read_key(self, timeout):
+        data = self._pull(timeout)
+        if data:
+            self.pending += data
+        return self._next_key()
+
+
+class LineEditor:
+    def __init__(self, commands):
+        self.text = ""
+        self.cursor = 0
+        self.history = []
+        self.index = 0
+        self.stash = ""
+        self.commands = commands
+
+    def clear(self):
+        self.text = ""
+        self.cursor = 0
+        self.index = len(self.history)
+
+    def _word_left(self):
+        position = self.cursor
+        while position > 0 and self.text[position - 1] == " ":
+            position -= 1
+        while position > 0 and self.text[position - 1] != " ":
+            position -= 1
+        return position
+
+    def _complete(self):
+        head = self.text[: self.cursor]
+        start = head.rfind(" ") + 1
+        token = head[start:]
+        if not token.startswith("/"):
+            return
+        matches = [command for command in self.commands if command.startswith(token)]
+        if not matches:
+            return
+        if len(matches) == 1:
+            self.text = self.text[:start] + matches[0] + self.text[self.cursor :]
+            self.cursor = start + len(matches[0])
+            return
+        shared = os.path.commonprefix(matches)
+        if len(shared) > len(token):
+            self.text = self.text[:start] + shared + self.text[self.cursor :]
+            self.cursor = start + len(shared)
+        else:
+            self.matches = matches
+
+    def key(self, name):
+        if name in ("ENTER",):
+            line = self.text.strip()
+            if line:
+                if not self.history or self.history[-1] != line:
+                    self.history.append(line)
+            self.clear()
+            return "submit", line
+        if name == "CTRLC":
+            if self.text:
+                self.clear()
+                return "cleared", ""
+            return "quit", ""
+        if name == "CTRLD":
+            return ("quit", "") if not self.text else ("none", "")
+        if name == "BACKSPACE":
+            if self.cursor:
+                self.text = self.text[: self.cursor - 1] + self.text[self.cursor :]
+                self.cursor -= 1
+        elif name == "DEL":
+            self.text = self.text[: self.cursor] + self.text[self.cursor + 1 :]
+        elif name == "LEFT":
+            self.cursor = max(0, self.cursor - 1)
+        elif name == "RIGHT":
+            self.cursor = min(len(self.text), self.cursor + 1)
+        elif name == "HOME":
+            self.cursor = 0
+        elif name == "END":
+            self.cursor = len(self.text)
+        elif name == "UP":
+            if self.index > 0:
+                if self.index == len(self.history):
+                    self.stash = self.text
+                self.index -= 1
+                self.text = self.history[self.index]
+                self.cursor = len(self.text)
+        elif name == "DOWN":
+            if self.index < len(self.history):
+                self.index += 1
+                self.text = self.history[self.index] if self.index < len(self.history) else self.stash
+                self.cursor = len(self.text)
+        elif name == "CTRLU":
+            self.text = self.text[self.cursor :]
+            self.cursor = 0
+        elif name == "CTRLK":
+            self.text = self.text[: self.cursor]
+        elif name == "CTRLW":
+            position = self._word_left()
+            self.text = self.text[:position] + self.text[self.cursor :]
+            self.cursor = position
+        elif name == "TAB":
+            self._complete()
+        elif name and len(name) == 1:
+            self.text = self.text[: self.cursor] + name + self.text[self.cursor :]
+            self.cursor += 1
+        return "none", ""
+
+
+class Screen:
+    def __init__(self):
+        self.active = sys.stdout.isatty() and sys.stdin.isatty()
+
+    def __enter__(self):
+        if self.active:
+            sys.stdout.write("\033[?1049h\033[?25l\033[2J\033[H")
+            sys.stdout.flush()
+        return self
+
+    def __exit__(self, *exc):
+        if self.active:
+            sys.stdout.write("\033[?25h\033[0m\033[?1049l")
+            sys.stdout.flush()
+        return False
+
+    def paint_frame(self, frame, cursor_row, cursor_col):
+        out = ["\033[?25l\033[H"]
+        limit = min(len(frame), cursor_row)
+        for row, segments in enumerate(frame[:limit], start=1):
+            text = "".join(paint(part, color) if color else part for part, color in segments)
+            out.append(f"\033[{row};1H\033[K{text}")
+        for row in range(limit + 1, cursor_row + 1):
+            out.append(f"\033[{row};1H\033[K")
+        out.append(f"\033[{cursor_row};{max(1, cursor_col)}H\033[?25h")
+        sys.stdout.write("".join(out))
+        sys.stdout.flush()
+
+
+class SpaApp:
+    IDLE_HINT = "ctrl+c clears the line, tab completes commands, /help lists everything"
+
+    def __init__(self, client):
+        self.client = client
+        self.turns = []
+        self.editor = LineEditor(COMMANDS)
+        self.reader = KeyReader()
+        self.screen = Screen()
+        self.busy = False
+        self.typing = None
+        self.typing_started = 0.0
+        self.typing_duration = 1.0
+        self.revealed = 0
+        self.result = None
+        self.error = None
+        self.worker = None
+        self.started = 0.0
+        self.notice = None
+        self.notice_until = 0.0
+        self.quit = False
+
+    def say(self, text, color=DIM, seconds=4.0):
+        self.notice = (text, color)
+        self.notice_until = time.monotonic() + seconds
+
+    def _ask_worker(self, prompt):
+        try:
+            self.result = self.client.ask(prompt)
+        except RuntimeError as err:
+            self.error = str(err)
+        except Exception as err:
+            self.error = f"unexpected error: {err}"
+
+    def submit(self, line):
+        if line.startswith("/"):
+            self.spa_command(line)
+            return
+        self.turns.append({"role": "user", "text": line})
+        self.busy = True
+        self.started = time.monotonic()
+        self.result = None
+        self.error = None
+        self.worker = threading.Thread(target=self._ask_worker, args=(build_prompt(self.turns[:-1], line),), daemon=True)
+        self.worker.start()
+
+    def _finish_turn(self):
+        self.busy = False
+        if self.error:
+            self.turns.pop()
+            self.say(f"error: {self.error}", RED, 8.0)
+            self.error = None
+            return
+        reply = (self.result or "").strip()
+        if not reply:
+            self.turns.pop()
+            self.say("the endpoint returned an empty answer", YELLOW, 6.0)
+            return
+        self.typing = reply
+        self.typing_started = time.monotonic()
+        self.typing_duration = min(1.6, max(0.25, len(reply) / 220))
+        self.revealed = 0
+
+    def _tick(self):
+        if self.busy and self.worker is not None and not self.worker.is_alive():
+            self._finish_turn()
+        if self.typing is not None:
+            progress = min(1.0, (time.monotonic() - self.typing_started) / self.typing_duration)
+            self.revealed = int(len(self.typing) * progress)
+            if progress >= 1.0:
+                self.turns.append({"role": "model", "text": self.typing})
+                self.typing = None
+        if self.notice and time.monotonic() > self.notice_until:
+            self.notice = None
+
+    def spa_command(self, line):
+        command, _, argument = line[1:].partition(" ")
+        command = command.lower()
+        argument = argument.strip()
+        if command in ("exit", "quit"):
+            self.quit = True
+        elif command == "help":
+            self.say(HELP.replace("\n", "   "), DIM, 12.0)
+        elif command == "history":
+            self.say(f"{len(self.turns)} turns on screen, newest at the bottom", DIM)
+        elif command == "model":
+            self.say(self.client.model or "no call made yet", DIM)
+        elif command in ("reset", "clear"):
+            self.turns.clear()
+            self.say("conversation cleared", DIM)
+        elif command == "save":
+            try:
+                self.say(f"saved to {save_session(self.turns, self.client.model)}", GREEN)
+            except RuntimeError as err:
+                self.say(f"error: {err}", RED, 8.0)
+        elif command == "load":
+            if not argument:
+                self.say("usage: /load <name>", YELLOW)
+            else:
+                try:
+                    data = load_session(argument)
+                except (OSError, ValueError) as err:
+                    self.say(f"error: {err}", RED, 8.0)
+                    return
+                self.turns = list(data.get("turns", []))
+                if data.get("model"):
+                    self.client.model = data["model"]
+                self.say(f"loaded {len(self.turns)} turns", GREEN)
+        elif command == "sessions":
+            saved = [path.name for path in list_sessions()]
+            self.say(", ".join(saved) if saved else "no saved sessions", DIM, 10.0)
+        else:
+            self.say(f"unknown command: /{command}, try /help", YELLOW)
+
+    def _body(self, rows, width):
+        lines = []
+        for turn in self.turns:
+            user = turn["role"] == "user"
+            label = "[You]: " if user else "[Reymart]: "
+            color = GREEN if user else CYAN
+            text = turn["text"]
+            if self.typing is not None and not user:
+                text = text[: self.revealed]
+            wrapped = textwrap.wrap(text, max(20, width - len(label))) or [""]
+            lines.append([(label, color), (wrapped[0], None)])
+            for extra in wrapped[1:]:
+                lines.append([(" " * len(label), None), (extra, None)])
+            lines.append([])
+        lines.append([])
+        while len(lines) < rows:
+            lines.insert(0, [])
+        return lines[-rows:] if len(lines) > rows else lines
+
+    def _status(self):
+        segments = []
+        if self.busy:
+            elapsed = time.monotonic() - self.started
+            frame = SPINNER[int(elapsed * 12) % len(SPINNER)]
+            segments.append((f"{frame} thinking {elapsed:4.1f}s", DIM))
+        elif self.typing is not None:
+            segments.append(("receiving", DIM))
+        if self.notice:
+            text, color = self.notice
+            if segments:
+                segments.append(("   ", DIM))
+            segments.append((text, color))
+        return segments or [(self.IDLE_HINT, DIM)]
+
+    def _input_row(self, text, cursor, width):
+        room = max(10, width - len("[You]: "))
+        start = 0
+        if cursor >= room:
+            start = cursor - room + 1
+        window = text[start : start + room]
+        return window, len("[You]: ") + cursor - start
+
+    def frame(self):
+        width, height = shutil.get_terminal_size(fallback=(80, 24))
+        width = max(32, width)
+        height = max(8, height)
+        rows = max(1, height - 6)
+        frame = [
+            [("gemini chat, a chatbot by Reymart Centeno", CYAN)],
+            [(f"endpoint {self.client.endpoint}", DIM)],
+            [(f"model {self.client.model or 'unknown'}   data {DATA_DIR}", DIM)],
+            [],
+        ]
+        frame.extend(self._body(rows, width))
+        frame.append(self._status())
+        window, column = self._input_row(self.editor.text, self.editor.cursor, width)
+        frame.append([("[You]: ", GREEN), (window, None)])
+        return frame, height, column
+
+    def run(self):
+        with self.screen:
+            with self.reader:
+                if not self.reader.ok:
+                    raise OSError("the terminal refused raw key input")
+                while not self.quit:
+                    frame, height, column = self.frame()
+                    self.screen.paint_frame(frame, height, column)
+                    key = self.reader.read_key(0.08)
+                    if key is None:
+                        self._tick()
+                        continue
+                    if self.busy:
+                        if key == "ENTER":
+                            self.say("still waiting for the previous answer", YELLOW, 3.0)
+                            continue
+                        if key == "CTRLC":
+                            self.editor.key("CTRLC")
+                            self.say("the request still finishes in the background", YELLOW, 5.0)
+                            continue
+                        self.editor.key(key)
+                        continue
+                    action, line = self.editor.key(key)
+                    if action == "submit":
+                        self.submit(line)
+                    elif action == "cleared":
+                        self.say("line cleared", DIM, 1.5)
+                    elif action == "quit":
+                        self.quit = True
+        return 0
+
+
+def run_spa(client):
+    if not (sys.stdout.isatty() and sys.stdin.isatty()):
+        print(paint("the spa view needs a real terminal, falling back to the chat view", YELLOW))
+        return run_repl(client, True)
+    if os.name != "nt":
+        try:
+            import termios
+        except ImportError:
+            print(paint("this python has no termios, falling back to the chat view", YELLOW))
+            return run_repl(client, True)
+    app = SpaApp(client)
+    try:
+        return app.run()
+    except Exception as err:
+        print(paint(f"the spa view stopped ({err}), falling back to the chat view", YELLOW))
+        return run_repl(client, True)
+
+
 def run_repl(client, animate_output):
     history = []
     prompt = Prompt()
@@ -620,6 +1124,7 @@ def main(argv):
     assume_no = False
     data_dir = None
     portable = False
+    mode = "chat"
     while args and args[0].startswith("--"):
         flag = args.pop(0)
         if flag in ("--url", "--endpoint"):
@@ -634,6 +1139,11 @@ def main(argv):
             data_dir = args.pop(0) if args else None
         elif flag == "--portable":
             portable = True
+        elif flag in ("--ui", "--render"):
+            mode = (args.pop(0) if args else "chat").lower()
+            if mode not in ("chat", "spa"):
+                print(f"unknown ui: {mode}, use chat or spa", file=sys.stderr)
+                return 2
         elif flag in ("-h", "--help"):
             print(__doc__)
             return 0
@@ -654,6 +1164,8 @@ def main(argv):
         except RuntimeError as err:
             print(paint(f"error: {err}", RED), file=sys.stderr)
             return 1
+    if mode == "spa":
+        return run_spa(client)
     ensure_requirements(assume_yes=assume_yes, assume_no=assume_no)
     return run_repl(client, animate_output)
 
