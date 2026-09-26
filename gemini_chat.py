@@ -342,9 +342,10 @@ def animate(text, step=6, speed=0.012):
 
 
 class Thinking:
-    def __init__(self, label="thinking", enabled=True):
+    def __init__(self, label="", label_color=CYAN, enabled=True):
         self.enabled = enabled and sys.stdout.isatty() and not os.environ.get("NO_SPINNER")
-        self.label = label
+        self.text = label
+        self.label = paint(label, label_color)
         self.stop = threading.Event()
         self.thread = None
         self.started = 0.0
@@ -359,15 +360,15 @@ class Thinking:
 
     def _spin(self):
         frame = 0
-        width = 0
+        width = len(self.text)
         while not self.stop.is_set():
-            line = f"{self.label} {SPINNER[frame % len(SPINNER)]} {time.monotonic() - self.started:4.1f}s "
-            sys.stdout.write("\r" + paint(line, DIM))
+            tick = f" {SPINNER[frame % len(SPINNER)]} {time.monotonic() - self.started:4.1f}s"
+            sys.stdout.write("\r" + self.label + paint(tick, DIM))
             sys.stdout.flush()
-            width = max(width, len(line))
+            width = max(width, len(self.text) + len(tick))
             frame += 1
             self.stop.wait(0.08)
-        sys.stdout.write("\r" + " " * (width + 8) + "\r")
+        sys.stdout.write("\r" + " " * (width + 4) + "\r" + self.label)
         sys.stdout.flush()
 
     def __exit__(self, *exc):
@@ -378,9 +379,10 @@ class Thinking:
 
 
 def reply_block(client, prompt, animate_output):
-    print(paint("[Gemini]: ", CYAN), end="", flush=True)
+    label = "[Reymart]: "
+    print(paint(label, CYAN), end="", flush=True)
     try:
-        with Thinking():
+        with Thinking(label=label, label_color=CYAN):
             reply = client.ask(prompt)
     except KeyboardInterrupt:
         print(paint("(cancelled)", DIM))
@@ -523,7 +525,7 @@ def handle_command(line, history, client):
         if not history:
             print(paint("conversation is empty", DIM))
         for turn in history:
-            label = "[You]: " if turn["role"] == "user" else "[Gemini]: "
+            label = "[You]: " if turn["role"] == "user" else "[Reymart]: "
             print(paint(label, GREEN if turn["role"] == "user" else CYAN) + turn["text"])
     elif command == "model":
         print(client.model or "unknown, no call made yet")
